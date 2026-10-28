@@ -1,0 +1,67 @@
+{
+  "primeiro-contrato": {
+    "duration": 7.0,
+    "title": "PRIMEIRO CONTRATO",
+    "subtitle": "Assinatura de Vínculo Profissional",
+    "elements": [
+      { "type": "manager", "start": 0.5, "end": 6.5, "position": "center" },
+      { "type": "clubCrest", "start": 1.0, "end": 6.5, "position": "top-center" },
+      { "type": "salaryInfo", "start": 2.0, "end": 6.5, "position": "bottom-center" }
+    ]
+  },
+  "campeao": {
+    "duration": 9.0,
+    "title": "CAMPEÃO DA COMPETIÇÃO",
+    "subtitle": "Glória Eterna",
+    "elements": [
+      { "type": "clubCrest", "start": 0.5, "end": 8.5, "position": "top-center" },
+      { "type": "trophy", "start": 6.0, "end": 8.8, "position": "center", "glow": true },
+      { "type": "banner", "start": 2.0, "end": 8.5, "position": "bottom-center" }
+    ]
+  },
+  "contratacao-galactica": {
+    "duration": 7.0,
+    "title": "REFORÇO GALÁCTICO",
+    "subtitle": "Apresentação Oficial de Estrela",
+    "elements": [
+      { "type": "clubCrest", "start": 0.5, "end": 6.5, "position": "top-left" },
+      { "type": "playerCard", "start": 1.5, "end": 6.5, "position": "right-card" }
+    ]
+  },
+  "joia-da-base": {
+    "duration": 9.5,
+    "title": "JOIA DA BASE",
+    "subtitle": "Promoção ao Time Profissional",
+    "elements": [
+      { "type": "clubCrest", "start": 0.5, "end": 9.0, "position": "top-right" },
+      { "type": "playerCard", "start": 1.2, "end": 9.0, "position": "left-card" }
+    ]
+  },
+  "subimos": {
+    "duration": 7.0,
+    "title": "ACESSO GARANTIDO",
+    "subtitle": "Glória na Divisão",
+    "elements": [
+      { "type": "clubCrest", "start": 0.5, "end": 6.5, "position": "top-center" },
+      { "type": "banner", "start": 1.5, "end": 6.5, "position": "center" }
+    ]
+  },
+  "rescisao": {
+    "duration": 6.0,
+    "title": "FIM DE CICLO",
+    "subtitle": "Rescisão de Contrato",
+    "elements": [
+      { "type": "clubCrest", "start": 0.5, "end": 5.5, "position": "top-center" },
+      { "type": "message", "start": 1.0, "end": 5.5, "position": "bottom-center" }
+    ]
+  },
+  "aposentadoria": {
+    "duration": 7.0,
+    "title": "DESPEDIDA DOS GRAMADOS",
+    "subtitle": "Aposentadoria de Ídolo",
+    "elements": [
+      { "type": "clubCrest", "start": 0.5, "end": 6.5, "position": "top-center" },
+      { "type": "playerCard", "start": 1.5, "end": 6.5, "position": "center" }
+    ]
+  }
+}

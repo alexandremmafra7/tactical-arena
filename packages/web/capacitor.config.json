@@ -1,0 +1,9 @@
+{
+  "appId": "com.tacticalarena.fc",
+  "appName": "Tactical Arena FC",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}

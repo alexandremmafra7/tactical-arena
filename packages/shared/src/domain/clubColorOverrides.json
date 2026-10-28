@@ -1,0 +1,18 @@
+{
+  "flamengo": {
+    "primaryColor": "#e11d48",
+    "secondaryColor": "#000000"
+  },
+  "palmeiras": {
+    "primaryColor": "#047857",
+    "secondaryColor": "#ffffff"
+  },
+  "sao_paulo": {
+    "primaryColor": "#dc2626",
+    "secondaryColor": "#ffffff"
+  },
+  "corinthians": {
+    "primaryColor": "#18181b",
+    "secondaryColor": "#ffffff"
+  }
+}

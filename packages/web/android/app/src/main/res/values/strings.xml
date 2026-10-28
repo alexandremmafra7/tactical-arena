@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Tactical Arena FC</string>
+    <string name="title_activity_main">Tactical Arena FC</string>
+    <string name="package_name">com.tacticalarena.fc</string>
+    <string name="custom_url_scheme">com.tacticalarena.fc</string>
+</resources>

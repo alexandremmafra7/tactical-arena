@@ -1,0 +1,44 @@
+{
+  "name": "@tactical-arena/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "dev": "electron .",
+    "build": "node scripts/prepare-resources.mjs",
+    "package": "node scripts/prepare-resources.mjs && electron-builder"
+  },
+  "devDependencies": {
+    "electron": "latest",
+    "electron-builder": "latest",
+    "esbuild": "latest",
+    "prisma": "^5.22.0"
+  },
+  "build": {
+    "appId": "com.tacticalarena.fc",
+    "productName": "Tactical Arena FC",
+    "directories": {
+      "output": "dist-release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": ".",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": ["portable", "nsis"],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

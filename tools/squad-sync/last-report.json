@@ -1,0 +1,31 @@
+{
+  "clubsSeen": 796,
+  "clubsSkippedExisting": 439,
+  "clubsSkippedCountry": 34,
+  "clubsAdded": 77,
+  "playersAdded": 2254,
+  "byCountry": {
+    "GRE": 6,
+    "SCO": 2,
+    "RUS": 8,
+    "USA": 1,
+    "POL": 6,
+    "KSA": 1,
+    "CZE": 1,
+    "NOR": 8,
+    "SRB": 3,
+    "BEL": 3,
+    "AUS": 8,
+    "AUT": 4,
+    "DEN": 2,
+    "UKR": 4,
+    "ROU": 6,
+    "SWE": 6,
+    "JPN": 1,
+    "NED": 1,
+    "POR": 1,
+    "BRA": 2,
+    "ARG": 1,
+    "FRA": 2
+  }
+}

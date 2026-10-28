@@ -1,0 +1,53 @@
+{
+  "name": "tactical-arena-fc",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/web",
+    "packages/desktop"
+  ],
+  "scripts": {
+    "test": "npm run test:shared && npm run test:web && npm run test:server",
+    "build": "npm run build:shared && npm run build -w packages/server && npm run build -w packages/web && npm run build -w packages/desktop",
+    "build:shared": "npm run build -w packages/shared",
+    "test:shared": "npm run test -w packages/shared",
+    "dev:server": "npm run dev -w packages/server",
+    "dev:web": "npm run dev -w packages/web",
+    "test:server": "npm run test -w packages/server",
+    "dev:desktop": "npm run dev -w packages/desktop",
+    "build:desktop": "npm run build:shared && npm run build -w packages/web && npm run build -w packages/desktop",
+    "package:desktop": "npm run build:shared && npm run build -w packages/web && npm run package -w packages/desktop",
+    "build:android": "npm run build:shared && npm run build -w packages/web && npm run cap:sync -w packages/web",
+    "build:apk": "npm run build:android && powershell -Command \"$env:JAVA_HOME = 'C:\\Program Files\\Android\\Android Studio\\jbr'; cd packages/web/android; .\\gradlew.bat assembleDebug; Copy-Item app/build/outputs/apk/debug/app-debug.apk ../../../release/android/Tactical-Arena-FC-debug.apk -Force\"",
+    "cap:sync": "npm run cap:sync -w packages/web",
+    "cap:open": "npm run cap:open -w packages/web",
+    "import:content": "npm run build:shared && npm run import:content -w packages/server",
+    "squads:download": "node tools/squad-sync/sync.mjs download",
+    "squads:build": "node tools/squad-sync/sync.mjs build",
+    "squads:apply": "node tools/squad-sync/sync.mjs apply",
+    "squads:sync": "node tools/squad-sync/sync.mjs all",
+    "squads:api": "node tools/squad-sync/apifootball.mjs sync",
+    "squads:api:apply": "node tools/squad-sync/apifootball.mjs apply",
+    "test:squads": "node --test tools/squad-sync/sync.test.mjs",
+    "test:web": "npm run test -w packages/web",
+    "test:benchmark": "tsx scripts/benchmark-tactical-engine.ts",
+    "jerseys:upscale": "node scripts/upscale-jerseys.mjs"
+  },
+  "allowScripts": {
+    "@prisma/client@5.22.0": true,
+    "@prisma/engines@5.22.0": true,
+    "esbuild@0.21.5": true,
+    "esbuild@0.28.1": true,
+    "prisma@5.22.0": true,
+    "electron-winstaller@5.4.0": true,
+    "electron@43.2.0": true
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
+    "flag-icons": "^7.5.0",
+    "playwright": "^1.62.0"
+  }
+}

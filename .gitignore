@@ -1,0 +1,67 @@
+node_modules/
+dist/
+build/
+!packages/desktop/build/
+!packages/desktop/build/**
+*.log
+*.tsbuildinfo
+test-results/
+.env
+.env.local
+packages/server/prisma/dev.db
+packages/server/prisma/dev.db-journal
+
+# squad-sync
+tools/squad-sync/cache/
+content/*.generated.csv
+content/*.generated.csv.applied
+content/*.bak*
+content/*.antes-*
+content/jerseys_hq/
+content/jerseys_backup_50x50/
+
+# Cópias sincronizadas automaticamente pelo copy-content.mjs (fonte de verdade: content/)
+packages/web/public/crests/
+packages/web/public/flags/
+packages/web/public/jerseys/
+packages/web/public/icons/
+packages/web/public/trophies/
+packages/web/public/clubs.csv
+packages/web/public/players.csv
+packages/web/public/kits.json
+
+# --- Binarios, saidas de build e backups: nao versionar ---
+release/
+startup-verification/
+packages/desktop/release*/
+packages/desktop/dist-*/
+packages/desktop/resources*/
+packages/desktop/packages/
+packages/web/dist/
+packages/web/android/.gradle/
+packages/web/android/build/
+packages/web/android/app/build/
+packages/web/android/app/src/main/assets/
+packages/web/android/app/src/main/res/xml/config.xml
+packages/web/android/capacitor-cordova-android-plugins/
+packages/web/android/local.properties
+saves/
+**/saves/
+*.exe
+*.apk
+*.db
+*.db-journal
+# O banco-base dos testes e necessario: sem ele a suite do servidor nem inicia.
+!packages/server/prisma/template.db
+packages/server/prisma/dev.db.*
+tools/upscaler/
+.pytest_cache/
+.superpowers/
+.claude/worktrees/
+.claude/settings.local.json
+# Um PNG por execucao do teamEditorFlow.test.ts desde agosto.
+content/crests/editor-test-*
+packages/web/public/crests/editor-test-*
+# CON e nome reservado do Windows: o git nao consegue indexar o arquivo.
+content/flags/CON.svg
+packages/web/public/flags/CON.svg

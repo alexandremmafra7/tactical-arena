@@ -1,0 +1,614 @@
+import { randomUUID } from 'node:crypto';
+import {
+  BOT_OWNER_ID,
+  Club,
+  ContinentalCompetition,
+  ContinentalFixture,
+  ContinentalStage,
+  resolveLineupPlayers,
+  simulatePenaltyShootout,
+  totalCupRounds,
+} from '@tactical-arena/shared';
+import { prisma } from '../db/prisma.js';
+import { scheduleCupRound } from './scheduleService.js';
+import { getGameState } from './gameStateService.js';
+import { getClub } from './clubService.js';
+import { createLiveMatch, getMatch, tickLiveMatchSystem } from './matchService.js';
+import { distributeContinentalPrizeMoney } from './financeService.js';
+import { getDefaultPreset } from './tacticPresetService.js';
+import { generateTitleNews } from './newsService.js';
+
+export class ContinentalError extends Error {}
+
+/**
+ * Find continental competition round context for live match banner
+ */
+export async function findContinentalRoundContext(
+  matchId: string,
+): Promise<{
+  competition: ContinentalCompetition;
+  round: number;
+  fixtures: ContinentalFixture[];
+} | null> {
+  const candidates = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT "id" FROM "ContinentalCompetition"
+    WHERE "status" = 'IN_PROGRESS' AND instr("fixturesJson", ${matchId}) > 0
+    LIMIT 1
+  `;
+  if (candidates.length === 0) return null;
+
+  const record = await prisma.continentalCompetition.findUnique({
+    where: { id: candidates[0].id },
+  });
+  if (!record) return null;
+
+  const competition = toDomain(record);
+  const fixture = competition.fixtures.find((f) => f.matchId === matchId);
+  if (!fixture) return null;
+  return {
+    competition,
+    round: fixture.round,
+    fixtures: competition.fixtures.filter((f) => f.round === fixture.round),
+  };
+}
+
+/**
+ * Pick tactic for continental fixture: manager's pending tactic, then default preset, then auto-fill
+ */
+async function resolveContinentalTactic(
+  club: Club,
+  competitionId: string,
+  knownPresets?: Map<string, Tactic>,
+): Promise<Tactic> {
+  if (club.pendingRoundTactic) {
+    try {
+      resolveLineupPlayers(club, club.pendingRoundTactic, competitionId);
+      return club.pendingRoundTactic;
+    } catch {
+      // Not valid for this competition, fall through
+    }
+  }
+
+  const preset = knownPresets
+    ? knownPresets.get(club.id) ?? null
+    : await getDefaultPreset(club.id);
+  if (preset) {
+    const tactic: Tactic = {
+      clubId: club.id,
+      formation: preset.formation,
+      mentality: preset.mentality,
+      attackStyle: preset.attackStyle,
+      markingStyle: preset.markingStyle,
+      attackApproach: preset.attackApproach,
+      pressing: preset.pressing,
+      lineup: preset.lineup,
+      substitutes: preset.substitutes,
+      plannedSubstitutions: [],
+    };
+    try {
+      resolveLineupPlayers(club, tactic, competitionId);
+      return tactic;
+    } catch {
+      // Preset no longer fields valid XI
+    }
+  }
+  // Computer-run clubs use their own style, human clubs fall back to neutral
+  if (club.ownerId === BOT_OWNER_ID) {
+    const identity = tacticalIdentityOf(club);
+    const autoFilled = autoFillLineup(club, competitionId, identity.formation);
+    return botTactic(club, autoFilled);
+  }
+  return autoFillLineup(club, competitionId, '4-4-2');
+}
+
+/**
+ * Rough lineup strength for continental penalty shootout tiebreak
+ */
+function roughLineupStrength(club: Club, tactic: Tactic): number {
+  const byId = new Map(club.players.map((p) => [p.id, p]));
+  const overalls = tactic.lineup
+    .map((slot) => byId.get(slot.playerId)?.overall ?? 0)
+    .filter((overall) => overall > 0);
+  if (overalls.length === 0) return 0;
+  return overalls.reduce((sum, overall) => sum + overall, 0) / overalls.length;
+}
+
+/**
+ * Create a continental competition for given confederation and season
+ */
+export async function createContinentalCompetition(
+  name: string,
+  confederationCode: string,
+  clubIds: string[],
+  format?: {
+    groupCount?: number;
+    teamsPerGroup?: number;
+    knockoutFormat?: 'SINGLE_LEG' | 'TWO_LEGGED';
+  },
+  seed: string = randomUUID(),
+): Promise<ContinentalCompetition> {
+  if (clubIds.length < 2) {
+    throw new ContinentalError('É necessário pelo menos 2 clubes para criar uma competição continental');
+  }
+
+  const rng = createRng(seed);
+  const shuffled = [...clubIds];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
+  let fixtures: ContinentalFixture[] = [];
+
+  // For now, implement simple knockout format similar to cups
+  // TODO: Implement group stage logic based on format
+  try {
+    fixtures = generateFirstRoundFixtures(shuffled);
+  } catch (err) {
+    throw new ContinentalError((err as Error).message);
+  }
+
+  const id = randomUUID();
+  const season = (await getGameState()).seasonYear;
+  const datedFixtures = await scheduleCupRound(fixtures, season, 1, shuffled);
+  await prisma.continentalCompetition.create({
+    data: {
+      id,
+      name,
+      confederationCode,
+      clubIdsJson: JSON.stringify(shuffled),
+      fixturesJson: JSON.stringify(datedFixtures),
+      status: 'IN_PROGRESS',
+      season,
+    },
+  });
+
+  return getContinentalCompetition(id);
+}
+
+/**
+ * Get continental competition by ID
+ */
+export async function getContinentalCompetition(
+  competitionId: string,
+): Promise<ContinentalCompetition> {
+  const record = await prisma.continentalCompetition.findUnique({
+    where: { id: competitionId },
+  });
+  if (!record) {
+    throw new ContinentalError(`Competição continental ${competitionId} não encontrada`);
+  }
+  return toDomain(record);
+}
+
+/**
+ * List continental competitions, optionally filtered by confederation
+ */
+export async function listContinentalCompetitions(
+  confederationCode?: string,
+): Promise<ContinentalCompetition[]> {
+  const records = await prisma.continentalCompetition.findMany({
+    where: confederationCode ? { confederationCode } : undefined,
+    orderBy: { createdAt: 'asc' },
+  });
+  return records.map(toDomain);
+}
+
+/**
+ * Advance a round in continental competition
+ */
+export async function advanceContinentalRound(
+  competitionId: string,
+  requestingUserId?: string,
+): Promise<ContinentalCompetition> {
+  const competition = await getContinentalCompetition(competitionId);
+  if (competition.status !== 'IN_PROGRESS') {
+    throw new ContinentalError('Esta competição já foi concluída');
+  }
+  if (requestingUserId) {
+    const clubs = await prisma.club.findMany({
+      where: { id: { in: competition.clubIds }, ownerId: requestingUserId },
+      select: { id: true },
+    });
+    if (clubs.length === 0) {
+      throw new ContinentalError('Você não tem clube nesta competição');
+    }
+  }
+  return playContinentalRound(competitionId);
+}
+
+/**
+ * Play one round of continental competition
+ */
+export async function playContinentalRound(
+  competitionId: string,
+  requestedRound?: number,
+): Promise<ContinentalCompetition> {
+  const competition = await getContinentalCompetition(competitionId);
+  if (competition.status !== 'IN_PROGRESS') {
+    throw new ContinentalError('Esta competição já foi concluída');
+  }
+
+  const pendingRounds = competition.fixtures
+    .filter((f) => f.winnerClubId === null)
+    .map((f) => f.round);
+  if (pendingRounds.length === 0) {
+    throw new ContinentalError('Não há rodada pendente para avançar');
+  }
+  const round = requestedRound ?? Math.min(...pendingRounds);
+  if (!pendingRounds.includes(round)) return competition;
+
+  const updatedFixtures = [...competition.fixtures];
+
+  const unplayed = (f: ContinentalFixture) => f.matchId === null && !f.result;
+
+  const roundFixtures = updatedFixtures.filter(
+    (f) => f.round === round && unplayed(f),
+  );
+
+  // Determine if any human managers involved in this round
+  const roundClubIds = [...new Set(
+    roundFixtures.flatMap((f) => [f.homeClubId, f.awayClubId])
+  )];
+  const roundClubOwners = await prisma.club.findMany({
+    where: { id: { in: roundClubIds } },
+    select: { id: true, ownerId: true },
+  });
+  const roundHasHuman = roundClubOwners.some(
+    (c) => c.ownerId !== BOT_OWNER_ID,
+  );
+
+  // Process each fixture in the round
+  for (let i = 0; i < updatedFixtures.length; i++) {
+    const fixture = updatedFixtures[i];
+    if (fixture.round !== round || fixture.winnerClubId !== null) continue;
+
+    const homeClub = await getClub(fixture.homeClubId);
+    const awayClub = await getClub(fixture.awayClubId);
+
+    let homeTactic: Tactic;
+    let awayTactic: Tactic;
+    let homeGoals: number;
+    let awayGoals: number;
+    let matchId = fixture.matchId;
+
+    if (matchId === null) {
+      // Need to play the fixture
+      homeTactic = await resolveContinentalTactic(homeClub, competitionId);
+      awayTactic = await resolveContinentalTactic(awayClub, competitionId);
+
+      let match = await createLiveMatch(
+        fixture.homeClubId,
+        fixture.awayClubId,
+        homeTactic,
+        awayTactic,
+        { type: 'continental', id: competitionId },
+      );
+
+      if (!roundHasHuman) {
+        match = await tickLiveMatchSystem(match.id);
+      }
+      matchId = match.id;
+      updatedFixtures[i] = { ...fixture, matchId };
+
+      if (!match.result) continue; // Still live, leave pending
+
+      ({ homeGoals, awayGoals } = match.result);
+    } else {
+      // Match exists, check if completed
+      let existing = await getMatch(matchId);
+      if (existing.status === 'LIVE') {
+        existing = await tickLiveMatchSystem(matchId);
+      }
+      if (existing.status !== 'SIMULATED' || !existing.result) continue; // Still being played
+
+      homeTactic = existing.homeTactic!;
+      awayTactic = existing.awayTactic!;
+      ({ homeGoals, awayGoals } = existing.result);
+    }
+
+    // Determine winner, handle penalties if needed
+    let winnerClubId: string | null = null;
+    let wentToPenalties = false;
+    let penaltyScore: { home: number; away: number } | undefined;
+    let aggregateScore: { home: number; away: number } | undefined;
+    let firstLegScore: { home: number; away: number } | undefined = fixture.firstLegScore;
+
+    if (fixture.leg === 1) {
+      firstLegScore = { home: homeGoals, away: awayGoals };
+      winnerClubId = '__LEG1__';
+    } else if (fixture.leg === 2) {
+      const leg1Away = firstLegScore?.away ?? 0;
+      const leg1Home = firstLegScore?.home ?? 0;
+      const aggHome = homeGoals + leg1Away;
+      const aggAway = awayGoals + leg1Home;
+      aggregateScore = { home: aggHome, away: aggAway };
+
+      if (aggHome !== aggAway) {
+        winnerClubId = aggHome > aggAway ? fixture.homeClubId : fixture.awayClubId;
+      } else {
+        wentToPenalties = true;
+        const shootoutRng = createRng(
+          `${competitionId}-${round}-${fixture.homeClubId}-${fixture.awayClubId}-agg-pens`,
+        );
+        const homeLineupPlayers = resolveLineupPlayers(homeClub, homeTactic, competitionId);
+        const awayLineupPlayers = resolveLineupPlayers(awayClub, awayTactic, competitionId);
+        const shootout = simulatePenaltyShootout(
+          homeClub,
+          awayClub,
+          homeLineupPlayers,
+          awayLineupPlayers,
+          shootoutRng,
+        );
+        winnerClubId = shootout.winnerClubId;
+        penaltyScore = { home: shootout.homeScore, away: shootout.awayScore };
+
+        if (matchId) {
+          const matchRecord = await prisma.match.findUnique({
+            where: { id: matchId },
+          });
+          if (matchRecord && matchRecord.resultJson) {
+            const res: MatchResult = JSON.parse(matchRecord.resultJson);
+            res.penaltyShootout = shootout;
+            await prisma.match.update({
+              where: { id: matchId },
+              data: { resultJson: JSON.stringify(res) },
+            });
+          }
+        }
+      }
+    } else {
+      // Single leg match
+      if (homeGoals !== awayGoals) {
+        winnerClubId = homeGoals > awayGoals ? fixture.homeClubId : fixture.awayClubId;
+      } else {
+        wentToPenalties = true;
+        const shootoutRng = createRng(
+          `${competitionId}-${round}-${fixture.homeClubId}-${fixture.awayClubId}-pens`,
+        );
+        const homeLineupPlayers = homeTactic.lineup
+          .map((slot) => homeClub.players.find((p) => p.id === slot.playerId))
+          .filter((p): p is Player => !!p);
+        const awayLineupPlayers = awayTactic.lineup
+          .map((slot) => awayClub.players.find((p) => p.id === slot.playerId))
+          .filter((p): p is Player => !!p);
+        const shootout = simulatePenaltyShootout(
+          homeClub,
+          awayClub,
+          homeLineupPlayers,
+          awayLineupPlayers,
+          shootoutRng,
+        );
+        winnerClubId = shootout.winnerClubId;
+        penaltyScore = { home: shootout.homeScore, away: shootout.awayScore };
+
+        if (matchId) {
+          const matchRecord = await prisma.match.findUnique({
+            where: { id: matchId },
+          });
+          if (matchRecord && matchRecord.resultJson) {
+            const res: MatchResult = JSON.parse(matchRecord.resultJson);
+            res.penaltyShootout = shootout;
+            await prisma.match.update({
+              where: { id: matchId },
+              data: { resultJson: JSON.stringify(res) },
+            });
+          }
+        }
+      }
+    }
+
+    updatedFixtures[i] = {
+      ...fixture,
+      matchId,
+      winnerClubId,
+      wentToPenalties,
+      penaltyScore,
+      firstLegScore,
+      aggregateScore,
+    };
+  }
+
+  // Check if round is complete
+  const roundStillPending = updatedFixtures.some(
+    (f) => f.round === round && f.winnerClubId === null,
+  );
+
+  let status: ContinentalCompetition['status'] = 'IN_PROGRESS';
+  let championClubId: string | null = null;
+  let championOwnerId: string | null = null;
+  let runnerUpClubId: string | null = null;
+
+  if (!roundStillPending) {
+    const currentRoundFixtures = updatedFixtures.filter(
+      (f) => f.round === round,
+    );
+    const isLeg1 = currentRoundFixtures.every((f) => f.leg === 1);
+
+    if (isLeg1) {
+      // Generate return leg fixtures
+      const leg2Fixtures: ContinentalFixture[] = currentRoundFixtures.map(
+        (leg1) => ({
+          round: round + 1,
+          stageName: (leg1.stageName ?? '').replace('(Ida)', '(Volta)'),
+          homeClubId: leg1.awayClubId,
+          awayClubId: leg1.homeClubId,
+          matchId: null,
+          winnerClubId: null,
+          wentToPenalties: false,
+          leg: 2,
+          tieId: leg1.tieId ?? randomUUID(),
+          firstLegScore: leg1.firstLegScore,
+        }),
+      );
+      updatedFixtures.push(...leg2Fixtures);
+    } else {
+      // Leg 2 completed or single-leg round completed
+      const winners = currentRoundFixtures
+        .map((f) => f.winnerClubId!)
+        .filter((id) => id !== '__LEG1__');
+
+      if (winners.length === 1) {
+        // Competition finished
+        status = 'FINISHED';
+        championClubId = winners[0];
+        const championClub = await getClub(championClubId);
+        championOwnerId = championClub.ownerId;
+
+        // Runner-up is the loser of the final
+        const finalFixture = currentRoundFixtures.find(
+          f => f.winnerClubId === championClubId,
+        );
+        if (finalFixture) {
+          runnerUpClubId =
+            finalFixture.homeClubId === championClubId
+              ? finalFixture.awayClubId
+              : finalFixture.homeClubId;
+        }
+      } else if (
+        // Continue to next round if more rounds needed
+        round < totalCupRounds(competition.clubIds.length)
+      ) {
+        // Generate next round pairings from winners
+        const nextRoundFixtures: ContinentalFixture[] = [];
+        for (let k = 0; k < winners.length; k += 2) {
+          nextRoundFixtures.push({
+            round: round + 1,
+            stageName: `Round ${round + 1}`,
+            homeClubId: winners[k],
+            awayClubId: winners[k + 1],
+            matchId: null,
+            winnerClubId: null,
+            wentToPenalties: false,
+            leg: 1,
+            tieId: randomUUID(),
+          });
+        }
+        updatedFixtures.push(...nextRoundFixtures);
+      }
+    }
+  }
+
+  // Calculate top scorer if finished
+  let topScorerPlayerId: string | null = null;
+  let topScorerName: string | null = null;
+  let topScorerGoals: number | null = null;
+  let topScorerClubId: string | null = null;
+
+  if (status === 'FINISHED') {
+    const matchIds = updatedFixtures
+      .map((f) => f.matchId)
+      .filter((id): id is string => !!id);
+    // TODO: Implement computeTopScorer for continental competitions
+    // For now, reuse cup version
+    // const topScorer = await computeTopScorer(matchIds, competition.clubIds);
+    // topScorerPlayerId = topScorer?.playerId ?? null;
+    // topScorerName = topScorer?.name ?? null;
+    // topScorerGoals = topScorer?.goals ?? null;
+    // topScorerClubId = topScorer?.clubId ?? null;
+  }
+
+  // Update calendar dates for any newly created fixtures
+  const playedOn = updatedFixtures.find(
+    (f) => f.round === round && f.date,
+  )?.date ?? undefined;
+  const newRounds = [...new Set(
+    updatedFixtures.filter((f) => !f.date).map((f) => f.round)
+  )].sort((a, b) => a - b);
+  let scheduledFixtures = updatedFixtures;
+  for (const newRound of newRounds) {
+    scheduledFixtures = await scheduleCupRound(
+      scheduledFixtures,
+      competition.season,
+      newRound,
+      competition.clubIds,
+      playedOn,
+    );
+  }
+
+  // Persist changes
+  await prisma.continentalCompetition.update({
+    where: { id: competitionId },
+    data: {
+      fixturesJson: JSON.stringify(scheduledFixtures),
+      status,
+      championClubId,
+      championOwnerId,
+      runnerUpClubId,
+      topScorerPlayerId,
+      topScorerName,
+      topScorerGoals,
+      topScorerClubId,
+    },
+  });
+
+  const finishedCompetition: ContinentalCompetition = {
+    ...competition,
+    fixtures: scheduledFixtures,
+    status,
+    championClubId,
+    championOwnerId,
+    runnerUpClubId,
+    topScorerPlayerId,
+    topScorerName,
+    topScorerGoals,
+    topScorerClubId,
+  };
+
+  if (status === 'FINISHED') {
+    await distributeContinentalPrizeMoney(finishedCompetition);
+    if (finishedCompetition.championClubId) {
+      const championClub = await getClub(
+        finishedCompetition.championClubId,
+      );
+      await generateTitleNews(
+        championClub.name,
+        championClub.id,
+        finishedCompetition.name,
+      ).catch((err) =>
+        console.error('generateTitleNews failed:', err),
+      );
+    }
+  }
+
+  return finishedCompetition;
+}
+
+/**
+ * Convert database record to domain object
+ */
+interface ContinentalCompetitionRecord {
+  id: string;
+  name: string;
+  confederationCode: string;
+  clubIdsJson: string;
+  fixturesJson: string;
+  status: string;
+  championClubId: string | null;
+  championOwnerId?: string | null;
+  runnerUpClubId: string | null;
+  season: number;
+  topScorerPlayerId: string | null;
+  topScorerName: string | null;
+  topScorerGoals: number | null;
+  topScorerClubId: string | null;
+}
+
+function toDomain(record: ContinentalCompetitionRecord): ContinentalCompetition {
+  return {
+    id: record.id,
+    name: record.name,
+    confederationCode: record.confederationCode as any,
+    clubIds: JSON.parse(record.clubIdsJson),
+    fixtures: JSON.parse(record.fixturesJson),
+    status: record.status as ContinentalCompetition['status'],
+    championClubId: record.championClubId,
+    championOwnerId: record.championOwnerId ?? null,
+    runnerUpClubId: record.runnerUpClubId ?? null,
+    season: record.season,
+    topScorerPlayerId: record.topScorerPlayerId,
+    topScorerName: record.topScorerName,
+    topScorerGoals: record.topScorerGoals,
+    topScorerClubId: record.topScorerClubId,
+  };
+}

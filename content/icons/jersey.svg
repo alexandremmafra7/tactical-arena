@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Clean, perfectly proportioned football jersey shape with smooth curves -->
+  <path d="M 33 8 
+           C 38 15, 62 15, 67 8 
+           L 84 15 
+           C 88 17, 95 24, 96 30 
+           L 91 46 
+           C 89 49, 83 48, 80 44 
+           L 75 38 
+           L 75 88 
+           C 75 92, 72 94, 68 94 
+           L 32 94 
+           C 28 94, 25 92, 25 88 
+           L 25 38 
+           L 20 44 
+           C 17 48, 11 49, 9 46 
+           L 4 30 
+           C 5 24, 12 17, 16 15 
+           Z" 
+        fill="#000" />
+</svg>

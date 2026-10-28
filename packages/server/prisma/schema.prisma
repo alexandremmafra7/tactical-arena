@@ -1,0 +1,334 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+model Club {
+  id                 String   @id @default(uuid())
+  name               String
+  ownerId            String
+  slug               String?  @unique
+  country            String   @default("BRA")
+  playersJson        String
+  academyPlayersJson String   @default("[]")
+  budget             Int      @default(5000000)
+  captainPlayerId    String?
+  captainWeeksServed Int      @default(0)
+  tutorPlayerId      String?
+  penaltyTakerId     String?
+  freeKickTakerId    String?
+  cornerLeftTakerId  String?
+  cornerRightTakerId String?
+  stadiumLevel       Int      @default(1)
+  stadiumCapacity    Int      @default(20000)
+  stadiumTier        Int      @default(1)
+  stadiumUpgradeWeek Int?
+  stadiumName        String?
+  /// Leagues + cups this club has ever won — drives sponsorship prestige (see ClubPrestigeInputs).
+  titlesWon          Int      @default(0)
+  /// Sócios ativos. Ver clubMembership: a receita semanal deles entra no caixa no tick.
+  membersCount       Int?
+  /// Null unless a stadium expansion is currently underway — see StadiumConstruction in finance.ts.
+  stadiumConstructionJson String?
+  sponsorshipsJson   String   @default("[]")
+  loansJson          String   @default("[]")
+  pendingTransferPaymentsJson String @default("[]")
+  /// A one-off tactic the manager set for their club's next league fixture only — consumed (cleared) once played.
+  pendingRoundTacticJson String?
+  /// Active specialized staff members (tactical assistant, football director, fitness coach, youth coordinator, CFO).
+  staffJson          String   @default("[]")
+  /// Historical log of recommendations, reads, and predictions made by staff members.
+  staffRecordJson    String   @default("[]")
+  /// Where the club is from, when a manager founded it and said so. Null for every imported club.
+  city               String?
+  /// Estado (UF) do clube.
+  state              String?
+  /// Weeks of rest owed to this squad that have not been folded into playersJson yet — see clubService.toDomain.
+  pendingRestWeeks   Int      @default(0)
+  /// Cached sums of each roster's wages, so the weekly tick never has to read a 42 KB squad to charge them.
+  weeklyWageBill     Int      @default(0)
+  academyWageBill    Int      @default(0)
+  /// How good the squad is, as three numbers, so a background match never has to open the roster.
+  ratingAttack       Float    @default(0)
+  ratingDefense      Float    @default(0)
+  ratingGoalkeeping  Float    @default(0)
+  /// Background matches played since the last season turn, credited as development there.
+  pendingMatchesPlayed Int    @default(0)
+  /// Who scores for this club, so a background goal can be credited without opening the roster.
+  scorerPoolJson     String   @default("[]")
+  /// Active or approved institutional bank guarantees (lines of credit for installments).
+  bankGuaranteesJson String   @default("[]")
+  kitPattern         String?
+  primaryColor       String?
+  secondaryColor     String?
+  crestBase64        String?
+  trophiesJson       String   @default("[]")
+  recordBookJson     String   @default("{}")
+  lockerRoomJson     String   @default("{}")
+  createdAt          DateTime @default(now())
+}
+
+model League {
+  id                String   @id @default(uuid())
+  countryCode       String
+  division          Int      @default(1)
+  name              String
+  capacity          Int
+  status            String   @default("OPEN")
+  clubIdsJson       String
+  fixturesJson      String
+  /// In-game "year" — the real calendar year this league's first season started; each auto-renewed
+  /// next season increments it by one (see leagueService.finalizeSeason). Used by the História screens.
+  season            Int      @default(1)
+  championClubId    String?
+  /// Whoever owned `championClubId` AT THE MOMENT it won — captured once, alongside `championClubId`,
+  /// so a later resignation/reclaim of that club can't retroactively misattribute this title. Nullable
+  /// only because older rows finalized before this field existed won't have it (historyService falls
+  /// back to the club's current owner for those).
+  championOwnerId   String?
+  topScorerPlayerId String?
+  topScorerName     String?
+  topScorerGoals    Int?
+  topScorerClubId   String?
+  createdAt         DateTime @default(now())
+}
+
+model Cup {
+  id                String   @id @default(uuid())
+  name              String
+  countryCode       String
+  clubIdsJson       String
+  fixturesJson      String
+  status            String   @default("IN_PROGRESS")
+  championClubId    String?
+  /// Same "captured at the moment of winning" reasoning as League.championOwnerId.
+  championOwnerId   String?
+  /// Same "in-game year" concept as League.season, stamped at creation (cups are one-off, manager-created
+  /// tournaments — no auto-renewal).
+  season            Int      @default(1)
+  topScorerPlayerId String?
+  topScorerName     String?
+  topScorerGoals    Int?
+  topScorerClubId   String?
+  createdAt         DateTime @default(now())
+}
+
+model TacticPreset {
+  id             String   @id @default(uuid())
+  clubId         String
+  name           String
+  formation      String
+  mentality      String
+  attackStyle    String
+  markingStyle   String
+  attackApproach String
+  /// Defaulted so presets saved before this dial existed heal to the neutral middle, not to null.
+  pressing       String   @default("MEDIUM")
+  lineupJson     String
+  substitutesJson String  @default("[]")
+  isDefault      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+}
+
+model TransferListing {
+  id           String   @id @default(uuid())
+  clubId       String
+  playerJson   String
+  askingPrice  Int
+  status       String   @default("ACTIVE")
+  createdAt    DateTime @default(now())
+}
+
+model TransferProposal {
+  id               String   @id @default(uuid())
+  buyerClubId      String
+  sellerClubId     String
+  targetPlayerId   String
+  targetPlayerName String   @default("")
+  cashAmount       Int
+  installments     Int      @default(1)
+  offeredPlayerIdsJson String @default("[]")
+  status           String   @default("PENDING")
+  responseMessage  String?
+  requiresBankGuarantee Boolean @default(false)
+  hasBankGuarantee Boolean  @default(false)
+  createdAt        DateTime @default(now())
+}
+
+model Match {
+  id             String   @id @default(uuid())
+  homeClubId     String
+  awayClubId     String
+  seed           String
+  status         String
+  homeTacticJson String?
+  awayTacticJson String?
+  resultJson     String?
+  /// Snapshot of an in-progress (status=LIVE) simulation — see LiveMatchState in match.ts. Null once
+  /// SIMULATED (folded into resultJson) or while still WAITING_TACTICS.
+  liveStateJson  String?
+  /// "league" | "cup", null for an ad-hoc PvP challenge — which competition (if any) this fixture
+  /// belongs to, stamped at creation by leagueService.advanceRound / cupService.advanceCupRound. Used to
+  /// scope red-card suspensions to the competition they were earned in (see Player.suspensionsJson).
+  competitionType String?
+  competitionId   String?
+  createdAt      DateTime @default(now())
+}
+
+/// One spell of a manager (User) in charge of a club — opened by clubService.claimClub, closed by
+/// clubService.resignClub. This is the only place "who managed which club, when" is actually recorded;
+/// Club.ownerId only ever reflects the CURRENT owner, so this is what "Minha carreira" reads to show
+/// history, and what jobOfferService reads to compute a manager's track record.
+model ManagerTenure {
+  id          String    @id @default(uuid())
+  userId      String
+  clubId      String
+  /// Snapshot at the time — the club could later be renamed or reclaimed by someone else.
+  clubName    String
+  countryCode String
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+  /// "RESIGNED" once closed; null while the tenure is still open.
+  endReason   String?
+}
+
+/// Um treinador do mundo: o do jogador e os da máquina, na mesma tabela.
+///
+/// Sem isto o mundo não tinha de quem um clube se separar, e "outro clube se interessou por você" seria
+/// ficção — ver o plano do mercado de técnicos e managerService.ts.
+model Manager {
+  id          String   @id @default(uuid())
+  name        String
+  /// País de origem, para o sabor. Nulo nos nomes reais, onde inventar nacionalidade seria mentir.
+  nationality String?
+  /// 0 a 100. Decide a que clubes ele chega, e cai a cada demissão.
+  reputation  Int      @default(50)
+  /// Preenchido só no treinador que é o jogador. Nulo em todos os da máquina.
+  userId      String?
+  /// Nulo enquanto está desempregado.
+  clubId      String?  @unique
+  /// A confiança da diretoria, 0 a 100. Recalculada em todo tick semanal — ver boardConfidence.ts.
+  confidence  Int      @default(60)
+  /// Quantas vezes o presidente já pediu satisfações. A demissão exige pelo menos uma.
+  warnings    Int      @default(0)
+  /// O que mais pesou na última avaliação, para o presidente ter o que dizer sem recalcular.
+  confidenceReason   String?
+  trophiesJson       String   @default("[]")
+  createdAt   DateTime @default(now())
+
+  @@index([clubId])
+  @@index([reputation])
+}
+
+/// Um clube sondando um treinador que já tem emprego — ver approachService.ts.
+///
+/// Diferente de `JobOffer`, que é a proposta a um técnico desempregado. Aqui o técnico tem clube, e a
+/// decisão é trocar ou ficar.
+model ManagerApproach {
+  id        String   @id @default(uuid())
+  managerId String
+  /// O clube interessado.
+  clubId    String
+  /// O clube onde o técnico está hoje, guardado no momento da sondagem para a tela comparar os dois.
+  fromClubId String?
+  status    String   @default("PENDING")
+  createdAt DateTime @default(now())
+
+  @@index([managerId, status])
+}
+
+/// A pending contract offer from a bot-owned club to a jobless manager — see jobOfferService.ts.
+model JobOffer {
+  id        String   @id @default(uuid())
+  userId    String
+  clubId    String
+  clubName  String
+  status    String   @default("PENDING")
+  createdAt DateTime @default(now())
+}
+
+/// A single generated headline for one club's news feed — see newsService.ts. Template based (not free
+/// text generation): every row is real match/transfer/title data slotted into a fixed sentence.
+model NewsItem {
+  id        String   @id @default(uuid())
+  clubId    String
+  category  String
+  headline  String
+  createdAt DateTime @default(now())
+}
+
+/// The game clock. Exactly one row per save (id is always "singleton") — each save is its own SQLite
+/// file, so a singleton row is coherent and gives SaveSlot.season a real source instead of a hardcoded 1.
+model GameState {
+  id String @id @default("singleton")
+
+  /// The current in-game date as a civil "YYYY-MM-DD" string, NOT a DateTime.
+  ///
+  /// A Prisma DateTime is a UTC instant; an in-game date is a square on a wall calendar with no time and
+  /// no zone. Stored as an instant, a matchday shifts by a day for players west of Greenwich while every
+  /// test on a UTC machine still passes. All arithmetic lives in shared/domain/gameDate.ts.
+  currentDate String
+
+  /// The civil year the current season belongs to. The Brazilian calendar runs April to December inside
+  /// one year, so this is also the year shown to the player.
+  seasonYear Int
+
+  /// PRE_SEASON (1 Jan to the opener) | IN_SEASON | OFF_SEASON (after the last matchday)
+  phase String @default("PRE_SEASON")
+
+  /// Monday of the last week already processed by the global weekly tick. Guards a retried advance from
+  /// charging wages twice.
+  lastWeeklyTickDate String?
+  deadlineDayJson    String   @default("{\"isActive\":false,\"seasonYear\":0,\"windowType\":\"PRE_SEASON\",\"currentHour\":0,\"auctions\":[],\"breakingNews\":[],\"panicBuyRequests\":[]}")
+  createdAt          DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Jogador sem clube, à espera de assinar.
+///
+/// Tabela própria porque o jogo guarda elenco como JSON dentro do clube: um jogador sem clube não tem onde
+/// morar. Ver contract.ts para quando alguém cai aqui.
+ 
+/// Entrevistas coletivas e mídia pós-jogo (Passo 5)
+model PressConference {
+  id            String   @id @default(cuid())
+  week          Int
+  type          String   // InterviewType
+  /// JSON serializado em texto: o conector SQLite nao suporta o tipo Json, e o servico ja grava
+  /// com JSON.stringify — igual a playersJson, clubIdsJson e todo o resto deste schema.
+  trigger       String   // InterviewTriggerContext
+  context       String   // PressConferenceContext
+  result        String?  // PressConferenceResult, preenchido depois que a coletiva acontece
+  impact        String?  // PressConferenceImpact, idem
+  delegateUsed  Boolean  @default(false)
+  assistantUsed String?
+  createdAt     DateTime @default(now())
+
+  teamId        String
+
+  @@index([week, teamId])
+}
+
+model FreeAgent {
+  id           String   @id
+  playerJson   String
+  country      String
+  overall      Int
+  position     String
+  /// Temporada em que ficou livre, para o passe encalhado poder ser limpo.
+  sinceSeason  Int
+  createdAt    DateTime @default(now())
+
+  @@index([country, overall])
+}
