@@ -5,10 +5,14 @@ import {
   formatMatchEventMinute,
   defensiveLineOf,
   calculateInMatchStamina,
+  calculateMatchRatings,
+  computeStandings,
   type AttackApproach,
   type AttackStyle,
   type Club,
+  type DefensiveLineHeight,
   type Formation,
+  type League,
   type MarkingStyle,
   type Match,
   type MatchEvent,
@@ -23,9 +27,19 @@ import {
   explainBlock,
   type GameMode,
   isStoppageTimeClimax,
+  computeLiveMomentumResource,
+  getMomentumSkillStatuses,
+  computeAssistantSubSuggestions,
+  buildHalftimeAssistantBriefing,
+  buildQuickPostMatchPressQuestions,
+  type MomentumSkillId,
+  type HalftimeToneChoice,
+  type QuickPressOption,
 } from '@tactical-arena/shared';
 import {
   advanceLiveMatch,
+  applyTeamTalk,
+  getActiveLeague,
   getClub,
   getInjuryDecision,
   getMatch,
@@ -61,7 +75,16 @@ import { soundFx } from '../lib/soundEffects.js';
 import { PitchVisualizer } from '../components/PitchVisualizer.js';
 import { TouchlineAssistantCard, findBestSubstitute } from '../components/TouchlineAssistantCard.js';
 import { resetScrollToTop } from '../components/ScrollToTop.js';
-import { ClockIcon, SquadIcon, TacticsIcon, LightningIcon, ShieldIcon, SoccerBallIcon, EyeIcon, RefreshIcon, SwordsIcon, FlameIcon } from '../components/icons/AppIcons.js';
+import { ClockIcon, SquadIcon, TacticsIcon, LightningIcon, ShieldIcon, SoccerBallIcon, EyeIcon, RefreshIcon, SwordsIcon, FlameIcon, AlertTriangleIcon } from '../components/icons/AppIcons.js';
+
+interface RoundGoalNotice {
+  id: string;
+  matchId: string;
+  minute: number;
+  headline: string;
+  scoreline: string;
+  isRival: boolean;
+}
 
 interface GoalQueueItem {
   event: MatchEvent;
@@ -243,6 +266,33 @@ export function LiveMatchPage() {
   const [tacticalModalMode, setTacticalModalMode] = useState<LiveTacticalModalMode>('manual');
   const [optionsMenuOpen, setOptionsMenuOpen] = useState(false);
   const [pitchViewTab, setPitchViewTab] = useState<'RADAR_2D' | 'TACTICAL_XI'>('RADAR_2D');
+  const [rightSidebarTab, setRightSidebarTab] = useState<'LANCES' | 'STATS'>('LANCES');
+  const [onlyImportantEvents, setOnlyImportantEvents] = useState(false);
+  const [autoPauseCritical, setAutoPauseCritical] = useState(true);
+  const autoPauseCriticalRef = useRef(true);
+  useEffect(() => {
+    autoPauseCriticalRef.current = autoPauseCritical;
+  }, [autoPauseCritical]);
+  const [selectedReplayEvent, setSelectedReplayEvent] = useState<MatchEvent | null>(null);
+  const [spiedMatchId, setSpiedMatchId] = useState<string | null>(null);
+  const [tacticControlMode, setTacticControlMode] = useState<'DIRECT' | 'TACTICAL'>('DIRECT');
+  const [goldenWindowUntilMinute, setGoldenWindowUntilMinute] = useState<number | null>(null);
+  const [activeLeague, setActiveLeague] = useState<League | null>(null);
+  const [spentMomentum, setSpentMomentum] = useState<number>(0);
+  const [lastSpendMinute, setLastSpendMinute] = useState<number | null>(null);
+  const [tacticalBoostCount, setTacticalBoostCount] = useState<number>(0);
+  const [activeMomentumSkill, setActiveMomentumSkill] = useState<MomentumSkillId | null>(null);
+  const [roundGoalNotices, setRoundGoalNotices] = useState<RoundGoalNotice[]>([]);
+  const [activeRoundBanner, setActiveRoundBanner] = useState<RoundGoalNotice | null>(null);
+  const seenSiblingGoalsRef = useRef<Record<string, number>>({});
+  const [halftimeTalkResult, setHalftimeTalkResult] = useState<{
+    label: string;
+    effect: string;
+    message: string;
+  } | null>(null);
+  const [halftimeTalkBusy, setHalftimeTalkBusy] = useState(false);
+  const [pressAnswers, setPressAnswers] = useState<Record<string, QuickPressOption>>({});
+  const [pressDelegated, setPressDelegated] = useState(false);
 
   // Stoppage decision state
   const [decisionOptions, setDecisionOptions] = useState<InjuryDecisionOptions | null>(null);
@@ -391,6 +441,8 @@ export function LiveMatchPage() {
         setSiblings(siblingMatches);
         siblingMatches.forEach((m) => {
           siblingsRequestedMinuteRef.current[m.id] = m.live?.currentMinute ?? 0;
+          const totalG = m.result ? m.result.homeGoals + m.result.awayGoals : m.live ? m.live.homeGoals + m.live.awayGoals : 0;
+          seenSiblingGoalsRef.current[m.id] = totalG;
         });
 
         const siblingClubIds = [...new Set(siblingMatches.flatMap((m) => [m.homeClubId, m.awayClubId]))];
@@ -408,6 +460,14 @@ export function LiveMatchPage() {
           }
         });
         setSiblingClubInfo(info);
+
+        if (comp?.type === 'league' && (resolvedMyClub?.id || data.homeClubId)) {
+          getActiveLeague(resolvedMyClub?.id ?? data.homeClubId)
+            .then((lg) => {
+              if (lg) setActiveLeague(lg);
+            })
+            .catch(() => {});
+        }
       } catch (err) {
         setError((err as Error).message);
       } finally {
@@ -557,19 +617,23 @@ export function LiveMatchPage() {
             }
 
             if (newGoalItems.length > 0) {
-              setGoalQueue((prev) => {
-                const isQueueEmpty = prev.length === 0;
-                if (isQueueEmpty) {
-                  const first = newGoalItems[0];
-                  soundFx.playGoalCheer();
-                  soundFx.playWhistle('short');
-                  playAnchorRef.current = null;
-                  requestedMinuteRef.current = first.event.minute;
-                  setDisplayMinute(first.event.minute);
-                  setPauseReason('manual');
-                }
-                return [...prev, ...newGoalItems];
-              });
+              if (autoPauseCriticalRef.current) {
+                setGoalQueue((prev) => {
+                  const isQueueEmpty = prev.length === 0;
+                  if (isQueueEmpty) {
+                    const first = newGoalItems[0];
+                    soundFx.playGoalCheer();
+                    soundFx.playWhistle('short');
+                    playAnchorRef.current = null;
+                    requestedMinuteRef.current = first.event.minute;
+                    setDisplayMinute(first.event.minute);
+                    setPauseReason('manual');
+                  }
+                  return [...prev, ...newGoalItems];
+                });
+              } else {
+                soundFx.playGoalCheer();
+              }
             }
 
             // Checa eventos dramáticos para o time do usuário (pênalti, cartão vermelho, substituição)
@@ -1018,6 +1082,7 @@ export function LiveMatchPage() {
       const current = (mySide === 'home' ? match.live.homeTactic : match.live.awayTactic) ?? effectiveTactic;
       const updated = await updateLiveMatchTactic(match.id, { ...current, ...changes });
       setMatch(updated);
+      setTacticalBoostCount((prev) => prev + 1);
       setAutoSubNotification('Ajuste tático de beira de campo aplicado com sucesso!');
     } catch (err) {
       setError((err as Error).message);
@@ -1025,6 +1090,69 @@ export function LiveMatchPage() {
       setQuickTacticBusy(false);
     }
   }
+
+  // Detect goals in simultaneous round matches and notify with live standing impact
+  useEffect(() => {
+    if (!siblings || siblings.length === 0 || !match) return;
+    const newNotices: RoundGoalNotice[] = [];
+
+    for (const s of siblings) {
+      const hGoals = s.result ? s.result.homeGoals : s.live ? s.live.homeGoals : 0;
+      const aGoals = s.result ? s.result.awayGoals : s.live ? s.live.awayGoals : 0;
+      const totalG = hGoals + aGoals;
+      const prevG = seenSiblingGoalsRef.current[s.id] ?? totalG;
+
+      if (totalG > prevG) {
+        seenSiblingGoalsRef.current[s.id] = totalG;
+        const hName = siblingClubInfo[s.homeClubId]?.name ?? s.homeClubId;
+        const aName = siblingClubInfo[s.awayClubId]?.name ?? s.awayClubId;
+        const lastEv = (s.live?.events ?? s.result?.events ?? []).filter((e) => e.type === 'goal').slice(-1)[0];
+        const scorerClub = lastEv?.team === 'away' ? aName : hName;
+        const minuteVal = lastEv?.minute ?? Math.floor(displayMinute);
+
+        // Compute live table position after this round goal
+        let posSuffix = '';
+        const targetClubId = myClub?.id ?? homeClub?.id;
+        if (activeLeague && competition?.type === 'league' && targetClubId) {
+          const pastResults = activeLeague.fixtures
+            .filter((f) => f.round < competition.round && f.result)
+            .map((f) => ({
+              homeClubId: f.homeClubId,
+              awayClubId: f.awayClubId,
+              homeGoals: f.result!.homeGoals,
+              awayGoals: f.result!.awayGoals,
+            }));
+          const allFixtures = [match, ...siblings].map((m) => ({
+            homeClubId: m.homeClubId,
+            awayClubId: m.awayClubId,
+            homeGoals: m.result ? m.result.homeGoals : m.live ? m.live.homeGoals : 0,
+            awayGoals: m.result ? m.result.awayGoals : m.live ? m.live.awayGoals : 0,
+          }));
+          const tableNow = computeStandings(activeLeague.clubIds, [...pastResults, ...allFixtures]);
+          const rankNow = tableNow.findIndex((r) => r.clubId === targetClubId) + 1;
+          if (rankNow > 0) {
+            posSuffix = ` · Sua posição agora: ${rankNow}º`;
+          }
+        }
+
+        newNotices.push({
+          id: `${s.id}-${totalG}-${minuteVal}`,
+          matchId: s.id,
+          minute: minuteVal,
+          headline: `Gol do ${scorerClub} na rodada (${hName} ${hGoals} x ${aGoals} ${aName})${posSuffix}`,
+          scoreline: `${hName} ${hGoals} x ${aGoals} ${aName}`,
+          isRival: true,
+        });
+      } else {
+        seenSiblingGoalsRef.current[s.id] = totalG;
+      }
+    }
+
+    if (newNotices.length > 0) {
+      setRoundGoalNotices((prev) => [...newNotices, ...prev].slice(0, 6));
+      setActiveRoundBanner(newNotices[0]);
+    }
+  }, [siblings]);
 
   if (loading) return <div className="page">Carregando...</div>;
   if (error && !match) return <div className="page error">{error}</div>;
@@ -1161,277 +1289,999 @@ export function LiveMatchPage() {
     return siblingClubInfo[clubId];
   }
 
+  // Live League Standing & Direct Rivals computation
+  const liveStandingSummary = (() => {
+    const targetClubId = effectiveClub.id;
+    if (!activeLeague || competition?.type !== 'league') return null;
+
+    const currentRound = competition.round;
+    // Past rounds already played
+    const pastResults = activeLeague.fixtures
+      .filter((f) => f.round < currentRound && f.result)
+      .map((f) => ({
+        homeClubId: f.homeClubId,
+        awayClubId: f.awayClubId,
+        homeGoals: f.result!.homeGoals,
+        awayGoals: f.result!.awayGoals,
+      }));
+
+    const preStandings = computeStandings(activeLeague.clubIds, pastResults);
+    const preIndex = preStandings.findIndex((r) => r.clubId === targetClubId);
+    const prePos = preIndex >= 0 ? preIndex + 1 : null;
+
+    // Live results from current round
+    const liveRoundResults = roundRows.map((m) => ({
+      homeClubId: m.homeClubId,
+      awayClubId: m.awayClubId,
+      homeGoals: m.result ? m.result.homeGoals : m.live ? m.live.homeGoals : 0,
+      awayGoals: m.result ? m.result.awayGoals : m.live ? m.live.awayGoals : 0,
+    }));
+
+    const liveStandings = computeStandings(activeLeague.clubIds, [...pastResults, ...liveRoundResults]);
+    const liveIndex = liveStandings.findIndex((r) => r.clubId === targetClubId);
+    if (liveIndex < 0) return null;
+
+    const livePos = liveIndex + 1;
+    const delta = prePos !== null ? prePos - livePos : 0; // positive means climbed up
+
+    // Direct rival club IDs (within 2 positions in live table)
+    const rivalIds = new Set<string>();
+    liveStandings.forEach((row, idx) => {
+      if (row.clubId !== targetClubId && Math.abs(idx - liveIndex) <= 2) {
+        rivalIds.add(row.clubId);
+      }
+    });
+
+    // Scenario hint: what happens if we score 1 more goal?
+    const hypotheticalResults = liveRoundResults.map((r) => {
+      if (r.homeClubId === targetClubId) return { ...r, homeGoals: r.homeGoals + 1 };
+      if (r.awayClubId === targetClubId) return { ...r, awayGoals: r.awayGoals + 1 };
+      return r;
+    });
+    const hypoStandings = computeStandings(activeLeague.clubIds, [...pastResults, ...hypotheticalResults]);
+    const hypoPos = hypoStandings.findIndex((r) => r.clubId === targetClubId) + 1;
+
+    let scenarioText = `${liveStandings[liveIndex].points} pts`;
+    if (hypoPos > 0 && hypoPos < livePos) {
+      if (hypoPos === 1) scenarioText = 'A 1 gol da Liderança!';
+      else if (hypoPos <= 4 && livePos > 4) scenarioText = 'A 1 gol do G4!';
+      else scenarioText = `1 gol sobe p/ ${hypoPos}º lugar`;
+    } else if (livePos === 1) {
+      scenarioText = 'Líder isolado ao vivo!';
+    } else if (livePos <= 4) {
+      scenarioText = `Dentro do G4 (${liveStandings[liveIndex].points} pts)`;
+    }
+
+    return {
+      livePos,
+      delta,
+      scenarioText,
+      rivalIds,
+      liveStandings,
+    };
+  })();
+
+  // Live player ratings for left sidebar & pitch
+  const liveRatingsByPlayerId = (() => {
+    const map = new Map<string, number>();
+    const hPlayers = (live.homeTactic?.lineup ?? [])
+      .map((s) => homeClub.players.find((p) => p.id === s.playerId))
+      .filter((p): p is Player => !!p);
+    const aPlayers = (live.awayTactic?.lineup ?? [])
+      .map((s) => awayClub.players.find((p) => p.id === s.playerId))
+      .filter((p): p is Player => !!p);
+    if (hPlayers.length > 0 || aPlayers.length > 0) {
+      const computed = calculateMatchRatings(hPlayers, aPlayers, live.events, live.homeGoals, live.awayGoals);
+      computed.home.forEach((r) => map.set(r.playerId, r.rating));
+      computed.away.forEach((r) => map.set(r.playerId, r.rating));
+    }
+    return map;
+  })();
+
+  const myLineupPlayers = effectiveTactic.lineup
+    .map((slot) => ({
+      slot,
+      player: effectiveClub.players.find((p) => p.id === slot.playerId),
+    }))
+    .filter((item): item is { slot: typeof effectiveTactic.lineup[number]; player: Player } => !!item.player);
+
+  const starterIdSet = new Set(effectiveTactic.lineup.map((s) => s.playerId));
+  const subbedOutSet = new Set(
+    live.events
+      .filter((e) => e.type === 'substitution' && e.team === effectiveSide && e.playerId)
+      .map((e) => e.playerId),
+  );
+  const myBenchPlayers = effectiveClub.players
+    .filter(
+      (p) =>
+        !starterIdSet.has(p.id) &&
+        !subbedOutSet.has(p.id) &&
+        (p.injuryWeeks ?? 0) === 0 &&
+        (p.suspensions?.length ?? 0) === 0,
+    )
+    .slice(0, 7);
+
+  // Stamina map for all current starters
+  const staminaByPlayerId = new Map<string, number>();
+  myLineupPlayers.forEach(({ player }) => {
+    staminaByPlayerId.set(player.id, calculateInMatchStamina(player, clockMinute));
+  });
+
+  // Assistant Quick-Sub Recommendations (Fase 2)
+  const assistantSubSuggestions = computeAssistantSubSuggestions({
+    starters: myLineupPlayers.map((x) => x.player),
+    bench: myBenchPlayers,
+    staminaByPlayerId,
+    ratingByPlayerId: liveRatingsByPlayerId,
+    bookedPlayerIds: myBookedIds,
+    vacatedPlayerIds: vacatedIds,
+    markingStyle: effectiveTactic.markingStyle,
+    currentMinute: clockMinute,
+  });
+  const topSubSuggestion = assistantSubSuggestions[0] ?? null;
+  const flaggedStarterIds = new Set(assistantSubSuggestions.map((s) => s.outPlayerId));
+
+  // Momentum as a real spendable resource (Fase 2)
+  const myPossession = effectiveSide === 'away' ? live.awayPossession : live.homePossession;
+  const myShots = effectiveSide === 'away' ? live.awayShots : live.homeShots;
+  const oppShots = effectiveSide === 'away' ? live.homeShots : live.awayShots;
+  const myCorners = effectiveSide === 'away' ? live.awayCorners : live.homeCorners;
+  const oppCorners = effectiveSide === 'away' ? live.homeCorners : live.awayCorners;
+
+  const momentumResource = computeLiveMomentumResource({
+    events: live.events,
+    currentMinute: clockMinute,
+    mySide: effectiveSide,
+    myPossession,
+    myShots,
+    opponentShots: oppShots,
+    myCorners,
+    opponentCorners: oppCorners,
+    tacticalBoostCount,
+    spentMomentum,
+    lastSpendMinute,
+  });
+
+  const myMomentum = momentumResource.effectiveMomentum;
+  const isGoldenWindowActive = goldenWindowUntilMinute !== null && clockMinute <= goldenWindowUntilMinute;
+  const effectiveActiveSkill: MomentumSkillId | null = isGoldenWindowActive
+    ? activeMomentumSkill ?? 'JANELA_DE_OURO'
+    : activeStance === 'press'
+      ? 'PRESSIONAR'
+      : activeStance === 'counter'
+        ? 'SEGURAR_JOGO'
+        : null;
+  const momentumSkills = getMomentumSkillStatuses(myMomentum, effectiveActiveSkill);
+
+  async function triggerMomentumSkill(skillId: MomentumSkillId) {
+    if (!match?.live || !myClub || !mySide || quickTacticBusy) return;
+    soundFx.playTacticalClick();
+
+    if (skillId === 'PRESSIONAR') {
+      if (myMomentum < 30) return;
+      setActiveMomentumSkill('PRESSIONAR');
+      await quickApplyTacticalChange({
+        mentality: 'attacking',
+        pressing: 'HIGH_PRESS',
+        attackApproach: 'BALANCED',
+      });
+      return;
+    }
+
+    if (skillId === 'JANELA_DE_OURO') {
+      if (myMomentum < 60) return;
+      setSpentMomentum((prev) => prev + 40);
+      setLastSpendMinute(clockMinute);
+      setActiveMomentumSkill('JANELA_DE_OURO');
+      setGoldenWindowUntilMinute(clockMinute + 8);
+      await quickApplyTacticalChange({
+        mentality: 'attacking',
+        pressing: 'HIGH_PRESS',
+        attackApproach: 'TOTAL_ATTACK',
+        defensiveLine: 'HIGH',
+      });
+      setAutoSubNotification('Janela de Ouro ativada (-40 Momentum): Ataque Total no terço final por 8 minutos!');
+      return;
+    }
+
+    if (skillId === 'AVALANCHE_TOTAL') {
+      if (myMomentum < 85) return;
+      setSpentMomentum((prev) => prev + 55);
+      setLastSpendMinute(clockMinute);
+      setActiveMomentumSkill('AVALANCHE_TOTAL');
+      setGoldenWindowUntilMinute(clockMinute + 6);
+      await quickApplyTacticalChange({
+        mentality: 'attacking',
+        pressing: 'HIGH_PRESS',
+        attackApproach: 'TOTAL_ATTACK',
+        defensiveLine: 'HIGH',
+        transitionStyle: 'COUNTERPRESS',
+      });
+      setAutoSubNotification('Avalanche acionada (-55 Momentum): Blitz ofensiva máxima por 6 minutos!');
+      return;
+    }
+
+    if (skillId === 'SEGURAR_JOGO') {
+      setSpentMomentum((prev) => Math.max(0, prev - 12));
+      setActiveMomentumSkill('SEGURAR_JOGO');
+      setGoldenWindowUntilMinute(null);
+      await quickApplyTacticalChange({
+        mentality: 'defensive',
+        pressing: 'LOW_BLOCK',
+        attackApproach: 'COUNTER_ATTACK',
+        defensiveLine: 'DEEP',
+      });
+      setAutoSubNotification('Postura de contenção ativada: Bloco baixo e saída rápida em contra-ataque.');
+    }
+  }
+
+  function classifyEventImportance(ev: MatchEvent): 'critical' | 'relevant' | 'routine' {
+    if (
+      ev.type === 'goal' ||
+      ev.isPenalty ||
+      ev.type === 'injury' ||
+      (ev.type === 'card' && (ev.suspensionMatches !== undefined || ev.description.toLowerCase().includes('vermelho')))
+    ) {
+      return 'critical';
+    }
+    if (
+      ev.type === 'card' ||
+      ev.type === 'substitution' ||
+      ev.shotOutcome === 'saved' ||
+      ev.shotOutcome === 'woodwork' ||
+      (ev.xg !== undefined && ev.xg >= 0.25)
+    ) {
+      return 'relevant';
+    }
+    return 'routine';
+  }
+
+  const filteredEvents = [...live.events]
+    .reverse()
+    .filter((ev) => !onlyImportantEvents || classifyEventImportance(ev) !== 'routine');
+
+  const spiedMatch = spiedMatchId ? roundRows.find((r) => r.id === spiedMatchId) ?? null : null;
+
+  // Fase 3: Halftime Assistant Briefing & Quick Post-Match Press Conference
+  const myGoals = effectiveSide === 'away' ? live.awayGoals : live.homeGoals;
+  const oppGoals = effectiveSide === 'away' ? live.homeGoals : live.awayGoals;
+  const myXgVal = (effectiveSide === 'away' ? live.awayXg : live.homeXg) ?? 0;
+  const oppXgVal = (effectiveSide === 'away' ? live.homeXg : live.awayXg) ?? 0;
+  const opponentClub = effectiveSide === 'away' ? homeClub : awayClub;
+  const myPressRecoveries = (effectiveSide === 'away' ? live.awayPressRecoveries : live.homePressRecoveries) ?? 0;
+
+  const exhaustedCount = Array.from(staminaByPlayerId.values()).filter((s) => s < 58).length;
+
+  const halftimeBriefing = buildHalftimeAssistantBriefing({
+    myGoals,
+    oppGoals,
+    myShots,
+    oppShots,
+    myXg: myXgVal,
+    oppXg: oppXgVal,
+    myPossession,
+    bookedCount: myBookedIds.size,
+    exhaustedCount,
+  });
+
+  const quickPressQuestions = buildQuickPostMatchPressQuestions({
+    myClubName: effectiveClub.name,
+    oppClubName: opponentClub.name,
+    myGoals,
+    oppGoals,
+    myShots,
+    oppShots,
+    myPressRecoveries,
+  });
+
+  const answeredPressOptions = Object.values(pressAnswers);
+  const totalPressMoraleDelta = pressDelegated
+    ? 1
+    : answeredPressOptions.reduce((acc, opt) => acc + opt.moraleDelta, 0);
+  const totalPressBoardDelta = pressDelegated
+    ? 1
+    : answeredPressOptions.reduce((acc, opt) => acc + opt.boardDelta, 0);
+
+  async function handleApplyHalftimeTone(choice: HalftimeToneChoice) {
+    if (!effectiveClub?.id || halftimeTalkBusy) return;
+    setHalftimeTalkBusy(true);
+    soundFx.playTacticalClick();
+    try {
+      const res = await applyTeamTalk(effectiveClub.id, choice.talkId, 'HALF_TIME', myGoals - oppGoals);
+      setHalftimeTalkResult({
+        label: choice.label,
+        effect: choice.moraleEffectLabel,
+        message: res.message || choice.subtitle,
+      });
+      const refreshed = await getClub(effectiveClub.id);
+      setMyClub(refreshed);
+    } catch {
+      setHalftimeTalkResult({
+        label: choice.label,
+        effect: choice.moraleEffectLabel,
+        message: choice.subtitle,
+      });
+    } finally {
+      setHalftimeTalkBusy(false);
+    }
+  }
+
+  function handleResumeSecondHalf() {
+    soundFx.playWhistle('start');
+    setHalftimeSeen(true);
+    setTacticalModalOpen(false);
+    setPauseReason(null);
+  }
+
+  async function handleAnswerQuickPress(questionId: string, option: QuickPressOption) {
+    if (pressDelegated) return;
+    soundFx.playTacticalClick();
+    setPressAnswers((prev) => ({ ...prev, [questionId]: option }));
+    if (effectiveClub?.id && Object.keys(pressAnswers).length === 0) {
+      const talkId =
+        myGoals > oppGoals ? 'PM_WIN_CALM' : myGoals === oppGoals ? 'PM_DRAW_CALM' : 'PM_LOSS_CALM';
+      applyTeamTalk(effectiveClub.id, talkId, 'POST_MATCH', myGoals - oppGoals)
+        .then(() => getClub(effectiveClub.id))
+        .then((refreshed) => setMyClub(refreshed))
+        .catch(() => null);
+    }
+  }
+
+  function handleDelegateQuickPress() {
+    soundFx.playTacticalClick();
+    setPressDelegated(true);
+  }
+
   return (
-    <div className="page live-match-page">
+    <div className="page live-match-page live-cockpit-v2">
       {error && <p className="error">{error}</p>}
 
-      <div className="live-match-layout">
-        {/* SIBLINGS ROUND TICKER */}
-        <div className="card live-round-panel">
-          <h2>Jogos da rodada</h2>
-          <ul className="club-list round-ticker">
-            {roundRows.map((s) => {
-              const home = clubInfoFor(s.homeClubId);
-              const away = clubInfoFor(s.awayClubId);
-              const lastEvent = s.live?.events[s.live.events.length - 1];
-              const score = s.result ? `${s.result.homeGoals} x ${s.result.awayGoals}` : s.live ? `${s.live.homeGoals} x ${s.live.awayGoals}` : '-';
-              const mine = s.id === match.id;
-              const justScored = s.status === 'LIVE' && lastEvent?.type === 'goal' && lastEvent.minute === clockMinute;
-              return (
-                <li key={s.id} className={`round-ticker-row${mine ? ' round-ticker-row-mine' : ''}`}>
-                  <span className="crest-name round-ticker-home">
-                    <span className="round-ticker-club-name">{home?.name ?? s.homeClubId}</span>
-                    {home && (
-                      <ClubCrest
-                        club={{
-                          id: s.homeClubId,
-                          name: home.name,
-                          slug: home.slug,
-                          crestBase64: home.crestBase64,
-                          primaryColor: home.primaryColor,
-                          secondaryColor: home.secondaryColor,
-                        }}
-                        size={22}
-                      />
-                    )}
-                  </span>
-                  <span className="round-ticker-score">{score}</span>
-                  <span className="crest-name">
-                    {away && (
-                      <ClubCrest
-                        club={{
-                          id: s.awayClubId,
-                          name: away.name,
-                          slug: away.slug,
-                          crestBase64: away.crestBase64,
-                          primaryColor: away.primaryColor,
-                          secondaryColor: away.secondaryColor,
-                        }}
-                        size={22}
-                      />
-                    )}
-                    <span className="round-ticker-club-name">{away?.name ?? s.awayClubId}</span>
-                  </span>
-                  <div className="round-ticker-meta">
-                    {s.status === 'LIVE' ? (
-                      <span className={`round-ticker-badge ${justScored ? 'round-ticker-badge-goal' : 'round-ticker-badge-live'}`}>
-                        {justScored ? 'Gol ao vivo' : `Ao vivo ${clock.displayMinute}`}
-                      </span>
-                    ) : (
-                      <span className="muted round-ticker-status">Encerrado</span>
-                    )}
-                    {lastEvent && (
-                      <span className="muted round-ticker-event">
-                        {eventIcon(lastEvent)} {formatMatchEventMinute(lastEvent, clockFormat)} {lastEvent.description}
-                      </span>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+      {autoSubNotification && (
+        <div className="cockpit-toast-banner">
+          <span>{autoSubNotification}</span>
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ padding: '2px 8px', fontSize: '0.75rem' }}
+            onClick={() => setAutoSubNotification(null)}
+          >
+            Fechar
+          </button>
         </div>
+      )}
 
-        {/* MAIN MATCH SIMULATION VIEW */}
-        <div className="live-match-main">
-          {autoSubNotification && (
-            <div
-              style={{
-                background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.25) 0%, rgba(147, 51, 234, 0.25) 100%)',
-                border: '1.5px solid #10b981',
-                color: '#ecfdf5',
-                padding: '10px 18px',
-                borderRadius: 8,
-                marginBottom: 10,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                boxShadow: '0 4px 16px rgba(16, 185, 129, 0.2)',
-                fontWeight: 600,
-                fontSize: '0.88rem',
+      {activeRoundBanner && (
+        <div className="cockpit-round-goal-banner" role="status">
+          <div className="cockpit-round-goal-banner-left">
+            <span className="cockpit-round-goal-tag">GOL NA RODADA</span>
+            <strong>{activeRoundBanner.headline}</strong>
+          </div>
+          <div className="cockpit-round-goal-actions">
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{ padding: '3px 10px', fontSize: '0.74rem' }}
+              onClick={() => {
+                setSpiedMatchId(activeRoundBanner.matchId);
+                setActiveRoundBanner(null);
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                
-                <span>{autoSubNotification}</span>
-              </div>
-              <button
-                type="button"
-                className="btn-secondary"
-                style={{ padding: '2px 8px', fontSize: '0.75rem' }}
-                onClick={() => setAutoSubNotification(null)}
-              >
-                ✕
-              </button>
-            </div>
-          )}
+              Espiar Jogo
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{ padding: '3px 8px', fontSize: '0.74rem' }}
+              onClick={() => setActiveRoundBanner(null)}
+            >
+              Ocultar
+            </button>
+          </div>
+        </div>
+      )}
 
-          {/* Broadcast Scoreboard Header with Direct Kickoff / Play / Pause Controls */}
-          <div className="broadcast-topbar">
-            <div className="broadcast-topbar-controls">
-              {pauseReason === null ? (
-                <button
-                  type="button"
-                  className="broadcast-live-btn"
-                  onClick={() => setPauseReason('manual')}
-                  title="Partida em andamento. Clique para Pausar (Espaço)"
-                >
-                  <span className="broadcast-live-badge">● AO VIVO</span>
-                  <span className="btn-pause-hint">⏸ Pausar</span>
-                </button>
-              ) : isFullTime ? (
-                <button
-                  type="button"
-                  className="broadcast-start-btn"
-                  onClick={handleGoToResult}
-                  title="Partida encerrada! Clique para ver o resumo da rodada"
-                >
-                  FIM DE JOGO • RESUMO
-                </button>
-              ) : pauseReason === 'manual' && clockMinute === 0 ? (
-                <button
-                  type="button"
-                  className="broadcast-start-btn"
-                  onClick={handleStartMatch}
-                  title="Dar a saída e iniciar a partida agora! (Espaço)"
-                >
-                  INICIAR PARTIDA
-                </button>
-              ) : pauseReason === 'manual' ? (
-                <button
-                  type="button"
-                  className="broadcast-resume-btn"
-                  onClick={() => setPauseReason(null)}
-                  title="Continuar simulação da partida (Espaço)"
-                >
-                  CONTINUAR
-                </button>
-              ) : pauseReason === 'halftime' ? (
-                <button
-                  type="button"
-                  className="broadcast-halftime-btn"
-                  onClick={() => openTacticalCenter('halftime')}
-                  title="Intervalo de jogo: Abrir Prancheta ou Iniciar 2º Tempo"
-                >
-                  INTERVALO (2º TEMPO)
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="broadcast-stoppage-btn"
-                  onClick={() => setTacticalModalOpen(true)}
-                  title="Jogo parado: Resolver decisão pendente"
-                >
-                  RESOLVER DECISÃO
-                </button>
-              )}
-            </div>
-
-            <span className="broadcast-clock">
-              {clock.displayMinute} • {clock.periodLabel}
+      {/* 1. TOP BROADCAST SCOREBOARD BAR */}
+      <div className="cockpit-top-header">
+        {/* Left: Live Clock, Play/Pause, Speeds & Auto-Pause */}
+        <div className="cockpit-top-left">
+          <div className="cockpit-live-clock-row">
+            <span className={`cockpit-live-pill ${pauseReason === null ? 'is-live' : 'is-paused'}`}>
+              <span className="cockpit-live-dot" />
+              {isFullTime
+                ? 'FIM DE JOGO'
+                : pauseReason === 'halftime'
+                  ? 'INTERVALO'
+                  : `AO VIVO • ${clock.displayMinute} ${clock.periodLabel}`}
             </span>
             {clock.stoppageSign && (
               <span className="stoppage-board-pill" title="Acréscimos determinados pela arbitragem">
-                +{clock.stoppageMinutes}' ACRÉSCIMOS
+                +{clock.stoppageMinutes}'
               </span>
             )}
-            <span className="broadcast-weather-pill">
-              Tempo Seco {crowd ? `• ${crowd.toLocaleString('pt-BR')} torcedores` : ''}
-            </span>
           </div>
 
-          <div className="match-banner">
-            {currentGoalEvent && !currentGoalEvent.isOpponent && (
-              <GoalCelebrationOverlay
-                key={getEventKey(currentGoalEvent.event)}
-                event={currentGoalEvent.event}
-                club={currentGoalEvent.club ?? effectiveClub}
-                scoreline={currentGoalEvent.scoreline}
-                isOpponent={false}
-                onDismiss={handleDismissGoal}
-              />
+          <div className="cockpit-transport-row">
+            {pauseReason === null ? (
+              <button
+                type="button"
+                className="cockpit-playpause-btn"
+                onClick={() => setPauseReason('manual')}
+                title="Partida em andamento. Clique para Pausar (Espaço)"
+              >
+                <ClockIcon size={13} style={{ marginRight: 5 }} />
+                Pausar
+              </button>
+            ) : isFullTime ? (
+              <button
+                type="button"
+                className="broadcast-start-btn"
+                onClick={handleGoToResult}
+                title="Partida encerrada! Clique para ver o resumo da rodada"
+              >
+                FIM DE JOGO • RESUMO
+              </button>
+            ) : pauseReason === 'manual' && clockMinute === 0 ? (
+              <button
+                type="button"
+                className="broadcast-start-btn"
+                onClick={handleStartMatch}
+                title="Dar a saída e iniciar a partida agora! (Espaço)"
+              >
+                INICIAR PARTIDA
+              </button>
+            ) : pauseReason === 'manual' ? (
+              <button
+                type="button"
+                className="broadcast-resume-btn"
+                onClick={() => setPauseReason(null)}
+                title="Continuar simulação da partida (Espaço)"
+              >
+                CONTINUAR
+              </button>
+            ) : pauseReason === 'halftime' ? (
+              <button
+                type="button"
+                className="broadcast-halftime-btn"
+                onClick={() => openTacticalCenter('halftime')}
+                title="Intervalo de jogo: Abrir Prancheta ou Iniciar 2º Tempo"
+              >
+                INTERVALO (2º TEMPO)
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="broadcast-stoppage-btn"
+                onClick={() => setTacticalModalOpen(true)}
+                title="Jogo parado: Resolver decisão pendente"
+              >
+                RESOLVER DECISÃO
+              </button>
             )}
 
-            {competition && (
-              <div className="match-banner-header">
-                <span className="match-banner-competition">{competitionRoundLabel(competition)}</span>
+            <div className="cockpit-speed-group" role="group" aria-label="Velocidade da partida">
+              {SPEED_OPTIONS.map((option, idx) => {
+                const liberada = canUseMatchSpeed(gameMode, option.key);
+                const shortLabels = ['1x', '2x', '3x', '4x'];
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    className={`cockpit-speed-pill${speedKey === option.key ? ' active' : ''}${liberada ? '' : ' locked'}`}
+                    onClick={() => (liberada ? setSpeedKey(option.key) : setSpeedBlock(explainBlock(gameMode, 'speed')))}
+                    title={liberada ? option.label : explainBlock(gameMode, 'speed')}
+                    aria-disabled={!liberada}
+                  >
+                    {shortLabels[idx] ?? option.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <label className="cockpit-autopause-toggle" title="Pausar automaticamente em gols e lances críticos">
+              <span>Auto-Pausa:</span>
+              <input
+                type="checkbox"
+                checked={autoPauseCritical}
+                onChange={(e) => setAutoPauseCritical(e.target.checked)}
+              />
+              <span className="cockpit-toggle-slider" />
+            </label>
+          </div>
+          {speedBlock && (
+            <p className="live-speed-aviso" role="status" style={{ margin: '4px 0 0', fontSize: '0.72rem' }}>
+              {speedBlock}
+            </p>
+          )}
+        </div>
+
+        {/* Center: Main Match Scoreboard */}
+        <div className="match-banner cockpit-center-scoreboard">
+          {currentGoalEvent && !currentGoalEvent.isOpponent && (
+            <GoalCelebrationOverlay
+              key={getEventKey(currentGoalEvent.event)}
+              event={currentGoalEvent.event}
+              club={currentGoalEvent.club ?? effectiveClub}
+              scoreline={currentGoalEvent.scoreline}
+              isOpponent={false}
+              onDismiss={handleDismissGoal}
+            />
+          )}
+
+          <div className={`match-banner-scoreboard ${opponentGoalAlert ? 'opponent-goal-danger' : ''}`}>
+            <div className="match-banner-team home">
+              <div className="match-banner-name-crest">
+                <ClubCrest club={homeClub} size={42} />
+                <div>
+                  <strong className="match-banner-name">{homeClub.name}</strong>
+                  {mySide === 'home' && <span className="match-banner-you-tag">Seu Clube</span>}
+                </div>
+              </div>
+              <span className={`match-banner-score ${opponentGoalAlert && mySide === 'away' ? 'score-danger-pulse' : ''}`}>
+                {live.homeGoals}
+              </span>
+            </div>
+
+            <div className="match-banner-divider">
+              <span className="match-banner-divider-text">-</span>
+              {competition && (
+                <span className="cockpit-comp-sub">{competitionRoundLabel(competition)}</span>
+              )}
+            </div>
+
+            <div className="match-banner-team away">
+              <span className={`match-banner-score ${opponentGoalAlert && mySide === 'home' ? 'score-danger-pulse' : ''}`}>
+                {live.awayGoals}
+              </span>
+              <div className="match-banner-name-crest">
+                <div>
+                  <strong className="match-banner-name">{awayClub.name}</strong>
+                  {mySide === 'away' && <span className="match-banner-you-tag">Seu Clube</span>}
+                </div>
+                <ClubCrest club={awayClub} size={42} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right: Live League Standing Badge & Tactical Button */}
+        <div className="cockpit-top-right">
+          {liveStandingSummary ? (
+            <div className="cockpit-live-standing-box" data-testid="live-standing-box">
+              <div className="cockpit-standing-headline">
+                <span className="cockpit-standing-label">POSIÇÃO AO VIVO:</span>
+                <strong className="cockpit-standing-rank">{liveStandingSummary.livePos}º</strong>
+                {liveStandingSummary.delta > 0 && (
+                  <span className="cockpit-standing-delta up">+{liveStandingSummary.delta} pos</span>
+                )}
+                {liveStandingSummary.delta < 0 && (
+                  <span className="cockpit-standing-delta down">{liveStandingSummary.delta} pos</span>
+                )}
+                {liveStandingSummary.delta === 0 && (
+                  <span className="cockpit-standing-delta neutral">estável</span>
+                )}
+              </div>
+              <div className="cockpit-standing-scenario">
+                • {liveStandingSummary.scenarioText}
+              </div>
+            </div>
+          ) : (
+            <div className="cockpit-live-standing-box">
+              <div className="cockpit-standing-headline">
                 <LiveBroadcastWatermark
                   logoKey={match.broadcaster?.logoKey ?? match.live?.broadcaster?.logoKey ?? 'omnisports'}
                 />
-                {clock.stoppageSign && (
-                  <span className="stoppage-board-pill" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                    <ClockIcon size={12} color="#f59e0b" />
-                    <span>{clock.stoppageSign} {clock.isStoppage ? 'ACRÉSCIMOS' : 'ACRÉSCIMOS'}</span>
+              </div>
+              <div className="cockpit-standing-scenario">
+                {crowd ? `${crowd.toLocaleString('pt-BR')} torcedores` : 'Transmissão Ao Vivo'}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 2. HORIZONTAL ROUND TICKER STRIP ("JOGOS DA RODADA") */}
+      <div className="cockpit-round-strip-wrapper">
+        <div className="cockpit-round-strip-title">
+          <span>JOGOS DA RODADA</span>
+        </div>
+        <ul className="club-list round-ticker cockpit-round-strip">
+          {roundRows.map((s) => {
+            const home = clubInfoFor(s.homeClubId);
+            const away = clubInfoFor(s.awayClubId);
+            const lastEvent = s.live?.events[s.live.events.length - 1];
+            const score = s.result
+              ? `${s.result.homeGoals} x ${s.result.awayGoals}`
+              : s.live
+                ? `${s.live.homeGoals} x ${s.live.awayGoals}`
+                : '-';
+            const mine = s.id === match.id;
+            const justScored = s.status === 'LIVE' && lastEvent?.type === 'goal' && Math.abs(lastEvent.minute - clockMinute) <= 1;
+            const isDirectRival =
+              !mine &&
+              !!liveStandingSummary &&
+              (liveStandingSummary.rivalIds.has(s.homeClubId) || liveStandingSummary.rivalIds.has(s.awayClubId));
+            const isSpied = spiedMatchId === s.id;
+
+            return (
+              <li
+                key={s.id}
+                onClick={() => setSpiedMatchId((prev) => (prev === s.id ? null : s.id))}
+                className={`round-ticker-row cockpit-ticker-pill${mine ? ' round-ticker-row-mine' : ''}${justScored ? ' is-goal-flash' : ''}${isDirectRival ? ' is-direct-rival' : ''}${isSpied ? ' is-spied' : ''}`}
+                title="Clique para espiar detalhes deste jogo da rodada"
+              >
+                {justScored && <span className="cockpit-ticker-goal-tag">GOL</span>}
+                {!justScored && isDirectRival && <span className="cockpit-ticker-rival-tag">RIVAL DIRETO</span>}
+                <span className="crest-name round-ticker-home">
+                  {home && (
+                    <ClubCrest
+                      club={{
+                        id: s.homeClubId,
+                        name: home.name,
+                        slug: home.slug,
+                        crestBase64: home.crestBase64,
+                        primaryColor: home.primaryColor,
+                        secondaryColor: home.secondaryColor,
+                      }}
+                      size={18}
+                    />
+                  )}
+                  <span className="round-ticker-club-name">{(home?.name ?? s.homeClubId).slice(0, 12)}</span>
+                </span>
+                <strong className="round-ticker-score">{score}</strong>
+                <span className="crest-name">
+                  <span className="round-ticker-club-name">{(away?.name ?? s.awayClubId).slice(0, 12)}</span>
+                  {away && (
+                    <ClubCrest
+                      club={{
+                        id: s.awayClubId,
+                        name: away.name,
+                        slug: away.slug,
+                        crestBase64: away.crestBase64,
+                        primaryColor: away.primaryColor,
+                        secondaryColor: away.secondaryColor,
+                      }}
+                      size={18}
+                    />
+                  )}
+                </span>
+                <span className="cockpit-ticker-minute">
+                  {s.status === 'LIVE' ? `(${clock.displayMinute})` : '(Fim)'}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+
+        {/* Spy Popover when clicking a sibling match */}
+        {spiedMatch && (() => {
+          const spyHome = clubInfoFor(spiedMatch.homeClubId);
+          const spyAway = clubInfoFor(spiedMatch.awayClubId);
+          const spyHomeName = spyHome?.name ?? spiedMatch.homeClubId;
+          const spyAwayName = spyAway?.name ?? spiedMatch.awayClubId;
+          const spyHomeGoals = spiedMatch.result
+            ? spiedMatch.result.homeGoals
+            : spiedMatch.live
+              ? spiedMatch.live.homeGoals
+              : 0;
+          const spyAwayGoals = spiedMatch.result
+            ? spiedMatch.result.awayGoals
+            : spiedMatch.live
+              ? spiedMatch.live.awayGoals
+              : 0;
+          const spyHomePoss =
+            spiedMatch.live?.homePossession ??
+            spiedMatch.result?.stats?.home?.possession ??
+            50;
+          const spyAwayPoss = 100 - spyHomePoss;
+          const spyHomeShots =
+            spiedMatch.live?.homeShots ??
+            spiedMatch.result?.stats?.home?.shots ??
+            0;
+          const spyAwayShots =
+            spiedMatch.live?.awayShots ??
+            spiedMatch.result?.stats?.away?.shots ??
+            0;
+          const spyHomeXg =
+            spiedMatch.live?.homeXg ??
+            spiedMatch.result?.stats?.home?.xg ??
+            0;
+          const spyAwayXg =
+            spiedMatch.live?.awayXg ??
+            spiedMatch.result?.stats?.away?.xg ??
+            0;
+
+          const homeStandingIdx = liveStandingSummary
+            ? liveStandingSummary.liveStandings.findIndex((r) => r.clubId === spiedMatch.homeClubId)
+            : -1;
+          const awayStandingIdx = liveStandingSummary
+            ? liveStandingSummary.liveStandings.findIndex((r) => r.clubId === spiedMatch.awayClubId)
+            : -1;
+          const isRivalGame =
+            !!liveStandingSummary &&
+            (liveStandingSummary.rivalIds.has(spiedMatch.homeClubId) ||
+              liveStandingSummary.rivalIds.has(spiedMatch.awayClubId));
+
+          const spyEvents = (spiedMatch.live?.events ?? spiedMatch.result?.events ?? []).slice(-3).reverse();
+
+          return (
+            <div className="cockpit-spy-popover">
+              <div className="cockpit-spy-header">
+                <div className="cockpit-spy-title-wrap">
+                  <span className="cockpit-spy-kicker">
+                    {isRivalGame ? 'CONFRONTO DE RIVAL DIRETO' : 'ESPIANDO JOGO DA RODADA'}
                   </span>
-                )}
-                {crowd !== null && (
-                  <span className="match-banner-crowd" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                    <SquadIcon size={13} color="#94a3b8" />
-                    <span>{crowd.toLocaleString('pt-BR')}</span>
-                  </span>
-                )}
-                <div className="match-banner-progress">
-                  <div className="match-banner-progress-track">
-                    <div className="match-banner-progress-fill" style={{ width: `${Math.max(0, Math.min(100, clock.progressPercent))}%` }} />
-                  </div>
+                  <strong className="cockpit-spy-matchup">
+                    {spyHomeName} {homeStandingIdx >= 0 ? `(${homeStandingIdx + 1}º)` : ''}{' '}
+                    <span className="cockpit-spy-score-pill">
+                      {spyHomeGoals} x {spyAwayGoals}
+                    </span>{' '}
+                    {spyAwayName} {awayStandingIdx >= 0 ? `(${awayStandingIdx + 1}º)` : ''}
+                  </strong>
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary cockpit-spy-close-btn"
+                  onClick={() => setSpiedMatchId(null)}
+                >
+                  Voltar ao meu jogo
+                </button>
+              </div>
+
+              {liveStandingSummary && (
+                <div className="cockpit-spy-impact-line">
                   <span>
-                    {isFullTime
-                      ? 'FIM DE JOGO'
-                      : pauseReason === 'halftime'
-                        ? 'Intervalo (1º Tempo)'
-                        : pauseReason === 'stoppage'
-                          ? `Jogo parado - ${clock.displayMinute}`
-                          : pauseReason === 'manual' && clockMinute > 0
-                            ? `Pausado - ${clock.displayMinute}`
-                            : `${clock.displayMinute} - ${clock.periodLabel}`}
+                    Sua posição ao vivo: <strong>{liveStandingSummary.livePos}º lugar</strong> · {liveStandingSummary.scenarioText}
                   </span>
                 </div>
+              )}
+
+              <div className="cockpit-spy-stats-strip">
+                <div className="cockpit-spy-stat-item">
+                  <span className="cockpit-spy-stat-val">{spyHomePoss}%</span>
+                  <span className="cockpit-spy-stat-lbl">Posse</span>
+                  <span className="cockpit-spy-stat-val">{spyAwayPoss}%</span>
+                </div>
+                <div className="cockpit-spy-poss-bar">
+                  <div className="cockpit-spy-poss-fill-home" style={{ width: `${spyHomePoss}%` }} />
+                </div>
+                <div className="cockpit-spy-stat-row-inline">
+                  <span>Finalizações: <strong>{spyHomeShots}</strong> x <strong>{spyAwayShots}</strong></span>
+                  <span>xG: <strong>{spyHomeXg.toFixed(2)}</strong> x <strong>{spyAwayXg.toFixed(2)}</strong></span>
+                </div>
+              </div>
+
+              <div className="cockpit-spy-events">
+                {spyEvents.map((ev, idx) => (
+                  <div key={idx} className="cockpit-spy-event-row">
+                    <strong>{formatMatchEventMinute(ev, clockFormat)}</strong>
+                    <span>{ev.description}</span>
+                  </div>
+                ))}
+                {spyEvents.length === 0 && (
+                  <span className="muted">Sem lances de destaque até o momento.</span>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+
+      {isStoppageTimeClimax(clockMinute, live.period, live.homeGoals, live.awayGoals, competition?.type !== 'league') && (
+        <div className="climax-box" style={{ margin: '6px 0', textAlign: 'center', padding: '6px 12px' }}>
+          <strong style={{ color: '#f87171', fontSize: '0.88rem', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+            <FlameIcon size={15} color="#f87171" /> CLÍMAX DOS ACRÉSCIMOS — PRESSÃO TOTAL DE TENSÃO MÁXIMA!
+          </strong>
+        </div>
+      )}
+
+      {/* 3. COCKPIT 3-COLUMN MAIN GRID */}
+      <div className="cockpit-main-grid">
+        {/* LEFT COLUMN: MEU TIME (XI) & SUBSTITUIÇÃO RÁPIDA */}
+        <aside className="cockpit-left-sidebar">
+          <div className="card cockpit-squad-card">
+            <div className="cockpit-panel-header">
+              <h2>MEU TIME ({effectiveTactic.formation}) &amp; BANCO</h2>
+              <button
+                type="button"
+                className="cockpit-mini-tactic-btn"
+                onClick={() => openTacticalCenter('manual')}
+                title="Abrir Prancheta Tática completa"
+              >
+                <TacticsIcon size={13} /> Prancheta
+              </button>
+            </div>
+
+            <div className="cockpit-xi-table-head">
+              <span>Pos.</span>
+              <span>Jogador</span>
+              <span>Fôlego</span>
+              <span>Nota</span>
+            </div>
+
+            <ul className="cockpit-xi-list">
+              {myLineupPlayers.map(({ player }) => {
+                const stamina = staminaByPlayerId.get(player.id) ?? 80;
+                const isBooked = myBookedIds.has(player.id);
+                const isSentOff = vacatedIds.has(player.id);
+                const isFlagged = flaggedStarterIds.has(player.id);
+                const rating = liveRatingsByPlayerId.get(player.id) ?? 6.0;
+                const barColor = stamina >= 68 ? '#4ade80' : stamina >= 45 ? '#facc15' : '#ef4444';
+
+                return (
+                  <li
+                    key={player.id}
+                    className={`cockpit-xi-row${isSentOff ? ' is-sent-off' : ''}${isFlagged ? ' is-assistant-flagged' : ''}`}
+                  >
+                    <span className={`cockpit-pos-badge pos-${player.position.toLowerCase()}`}>
+                      {player.position}
+                    </span>
+                    <span className="cockpit-player-name" title={player.name}>
+                      {player.name}
+                    </span>
+                    <div className="cockpit-stamina-cell">
+                      <div className="cockpit-stamina-track" title={`Condição física: ${Math.round(stamina)}%`}>
+                        <div className="cockpit-stamina-fill" style={{ width: `${Math.max(5, stamina)}%`, background: barColor }} />
+                      </div>
+                      {isBooked && <span className="cockpit-card-icon yellow" title="Amarelado" />}
+                      {isSentOff && <span className="cockpit-card-icon red" title="Expulso" />}
+                    </div>
+                    <strong
+                      className="cockpit-rating-cell"
+                      style={{ color: rating >= 7.2 ? '#4ade80' : rating < 6.0 ? '#f87171' : '#e2e8f0' }}
+                    >
+                      {rating.toFixed(1)}
+                    </strong>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          {/* Quick Substitution & Assistant Recommendation Box */}
+          <div className="card cockpit-quicksub-card">
+            <div className="cockpit-panel-header">
+              <h2>SUBSTITUIÇÃO RÁPIDA (1-Clique)</h2>
+            </div>
+
+            {topSubSuggestion && (
+              <div className={`cockpit-assistant-sub-alert urgency-${topSubSuggestion.urgency.toLowerCase()}`}>
+                <div className="cockpit-assistant-sub-head">
+                  <AlertTriangleIcon size={13} color={topSubSuggestion.urgency === 'CRITICAL' ? '#f87171' : '#facc15'} />
+                  <strong>Alerta do Auxiliar</strong>
+                </div>
+                <p className="cockpit-assistant-sub-reason">
+                  <strong>{topSubSuggestion.outPlayerName}:</strong> {topSubSuggestion.reasonLabel}.
+                </p>
+                <button
+                  type="button"
+                  className="cockpit-quicksub-cta"
+                  disabled={busy}
+                  onClick={() => quickApplySubstitution(topSubSuggestion.outPlayerId, topSubSuggestion.inPlayerId)}
+                >
+                  <RefreshIcon size={13} color="#181204" />
+                  <span>
+                    Trocar {topSubSuggestion.outPlayerName.split(' ').slice(-1)[0]} por{' '}
+                    {topSubSuggestion.inPlayerName.split(' ').slice(-1)[0]} (OVR {topSubSuggestion.inPlayerOverall})
+                  </span>
+                </button>
               </div>
             )}
 
-            <div className={`match-banner-scoreboard ${opponentGoalAlert ? 'opponent-goal-danger' : ''}`}>
-              <div className="match-banner-team home">
-                <div className="match-banner-name-crest">
-                  <ClubCrest club={homeClub} size={48} />
-                  <div>
-                    <strong className="match-banner-name">{homeClub.name}</strong>
-                    {mySide === 'home' && <span className="match-banner-you-tag">Seu Clube</span>}
-                  </div>
-                </div>
-                <span className={`match-banner-score ${opponentGoalAlert && mySide === 'away' ? 'score-danger-pulse' : ''}`}>{live.homeGoals}</span>
-              </div>
-
-              <div className="match-banner-divider">
-                <span className="match-banner-divider-text">x</span>
-              </div>
-
-              <div className="match-banner-team away">
-                <span className={`match-banner-score ${opponentGoalAlert && mySide === 'home' ? 'score-danger-pulse' : ''}`}>{live.awayGoals}</span>
-                <div className="match-banner-name-crest">
-                  <div>
-                    <strong className="match-banner-name">{awayClub.name}</strong>
-                    {mySide === 'away' && <span className="match-banner-you-tag">Seu Clube</span>}
-                  </div>
-                  <ClubCrest club={awayClub} size={48} />
-                </div>
-              </div>
+            <div className="cockpit-bench-chips">
+              {myBenchPlayers.slice(0, 4).map((benchPlayer) => {
+                const targetStarter =
+                  (topSubSuggestion ? myLineupPlayers.find((x) => x.player.id === topSubSuggestion.outPlayerId)?.player : undefined) ??
+                  mostExhaustedStarter?.target ??
+                  myLineupPlayers.find((x) => x.player.position === benchPlayer.position)?.player ??
+                  myLineupPlayers[0]?.player;
+                return (
+                  <button
+                    key={benchPlayer.id}
+                    type="button"
+                    disabled={busy || !targetStarter}
+                    className="cockpit-bench-chip"
+                    onClick={() => targetStarter && quickApplySubstitution(targetStarter.id, benchPlayer.id)}
+                    title={targetStarter ? `Colocar ${benchPlayer.name} (${benchPlayer.position}, OVR ${benchPlayer.overall}) no lugar de ${targetStarter.name}` : benchPlayer.name}
+                  >
+                    <span className="cockpit-bench-ring">{benchPlayer.position}</span>
+                    <span className="cockpit-bench-name">{benchPlayer.name.split(' ').slice(-1)[0]}</span>
+                    <span className="cockpit-bench-ovr">{benchPlayer.overall}</span>
+                  </button>
+                );
+              })}
             </div>
+
+            {!topSubSuggestion && (
+              <button
+                type="button"
+                className="cockpit-quicksub-cta secondary"
+                onClick={() => openTacticalCenter('manual')}
+              >
+                <SquadIcon size={14} />
+                <span>Gerenciar Substituições</span>
+              </button>
+            )}
           </div>
+        </aside>
 
-          {isStoppageTimeClimax(clockMinute, live.period, live.homeGoals, live.awayGoals, competition?.type !== 'league') && (
-            <div className="climax-box" style={{ margin: '12px 0', textAlign: 'center' }}>
-              <strong style={{ color: '#f87171', fontSize: '0.95rem', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                <FlameIcon size={16} color="#f87171" /> CLÍMAX DOS ACRÉSCIMOS — PRESSÃO TOTAL DE TENSÃO MÁXIMA!
-              </strong>
+        {/* CENTER COLUMN: 2D PITCH + TIMELINE + MOMENTUM HUD */}
+        <main className="cockpit-center-column">
+          <div className="card cockpit-pitch-card">
+            <div className="cockpit-pitch-topbar">
+              <div className="live-pitch-tabs" role="tablist" aria-label="Visualização do Campo">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={pitchViewTab === 'RADAR_2D'}
+                  className={`btn-live-pitch-tab ${pitchViewTab === 'RADAR_2D' ? 'active' : ''}`}
+                  onClick={() => setPitchViewTab('RADAR_2D')}
+                >
+                  <EyeIcon size={14} style={{ marginRight: 5 }} /> Campo 2D Ao Vivo
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={pitchViewTab === 'TACTICAL_XI'}
+                  className={`btn-live-pitch-tab ${pitchViewTab === 'TACTICAL_XI' ? 'active' : ''}`}
+                  onClick={() => setPitchViewTab('TACTICAL_XI')}
+                >
+                  <TacticsIcon size={14} style={{ marginRight: 5 }} /> Prancheta Tática Ao Vivo
+                </button>
+              </div>
+              {isGoldenWindowActive && (
+                <span className="cockpit-golden-badge">
+                  <LightningIcon size={13} color="#181204" style={{ marginRight: 4 }} />
+                  {activeMomentumSkill === 'AVALANCHE_TOTAL' ? 'AVALANCHE OFENSIVA ATIVA' : 'JANELA DE OURO ATIVA'}
+                </span>
+              )}
             </div>
-          )}
 
-          <MatchTimelineBar
-            events={live.events}
-            currentMinute={clockMinute}
-            homeName={homeClub.name}
-            awayName={awayClub.name}
-          />
+            {pitchViewTab === 'RADAR_2D' ? (
+              <PitchVisualizer
+                homeClub={homeClub}
+                awayClub={awayClub}
+                homeTactic={live.homeTactic}
+                awayTactic={live.awayTactic}
+                mySide={mySide}
+                events={live.events}
+                currentMinute={clockMinute}
+                momentum={momentumResource.homeMomentum}
+                isPaused={pauseReason !== null}
+                speedKey={speedKey}
+                homeGoals={live.homeGoals}
+                awayGoals={live.awayGoals}
+                selectedEvent={selectedReplayEvent}
+                onSelectEvent={setSelectedReplayEvent}
+                goldenWindowSide={isGoldenWindowActive ? effectiveSide : null}
+              />
+            ) : (
+              <div className="live-pitchfield-compact-container">
+                <PitchField
+                  compact
+                  formation={effectiveTactic.formation}
+                  squad={effectiveClub.players}
+                  selections={effectiveTactic.lineup.map((s) => s.playerId)}
+                  currentMatchMinute={clockMinute}
+                  bookedPlayerIds={myBookedIds}
+                  vacatedPlayerIds={vacatedIds}
+                  defensiveLine={effectiveTactic.defensiveLine ?? defensiveLineOf(effectiveTactic)}
+                  attackStyle={effectiveTactic.attackStyle}
+                  pressing={effectiveTactic.pressing}
+                  kitColor={clubColor}
+                  clubSlug={effectiveClub.slug}
+                  isAway={effectiveSide === 'away'}
+                  onSelect={() => {}}
+                />
+              </div>
+            )}
+
+            <MatchTimelineBar
+              events={live.events}
+              currentMinute={clockMinute}
+              homeName={homeClub.name}
+              awayName={awayClub.name}
+            />
+          </div>
 
           {match.result?.penaltyShootout && (
             <PenaltyShootoutGridWidget
@@ -1441,81 +2291,61 @@ export function LiveMatchPage() {
             />
           )}
 
-          {/* Touchline Commands HUD */}
-          <div className="touchline-shouts-bar">
-            <span className="touchline-shout-title">
-              Gritos da Beira do Gramado:
-            </span>
-            <div className="touchline-shouts-list" role="radiogroup" aria-label="Instruções táticas rápidas">
-              <button
-                type="button"
-                role="radio"
-                aria-checked={activeStance === 'press'}
-                className={`touchline-shout-btn ${activeStance === 'press' ? 'active' : ''}`}
-                disabled={quickTacticBusy}
-                onClick={() => quickApplyTacticalStance('press')}
-                title="Pressionar: mentalidade ofensiva e pressão alta na saída de bola adversária"
-              >
-                <span className="touchline-shout-icon">
-                  <SoccerBallIcon size={14} color="#f59e0b" />
+          {/* BOTTOM MOMENTUM BAR WITH 4 ZONES & TACTICAL RESOURCE SKILLS */}
+          <div className="card cockpit-momentum-card">
+            <div className="cockpit-momentum-header">
+              <div className="cockpit-momentum-title-group">
+                <strong>Momentum Tático</strong>
+                <span className="muted" style={{ fontSize: '0.78rem' }}>
+                  {momentumLabel(momentumResource.homeMomentum, homeClub.name, awayClub.name)}
+                  {momentumResource.remainingDebt > 0 ? ` · Recarregando (-${momentumResource.remainingDebt})` : ''}
                 </span>
-                <span className="touchline-shout-label">Pressionar</span>
-                {activeStance === 'press' && <span className="touchline-shout-indicator" aria-hidden="true" />}
-              </button>
+              </div>
+              <span className="cockpit-momentum-pct">{myMomentum}%</span>
+            </div>
 
-              <button
-                type="button"
-                role="radio"
-                aria-checked={activeStance === 'counter'}
-                className={`touchline-shout-btn ${activeStance === 'counter' ? 'active' : ''}`}
-                disabled={quickTacticBusy}
-                onClick={() => quickApplyTacticalStance('counter')}
-                title="Contra-Ataque: bloco baixo defensivo com transição rápida e vertical"
-              >
-                <span className="touchline-shout-icon">
-                  <SwordsIcon size={14} color="#38bdf8" />
-                </span>
-                <span className="touchline-shout-label">Contra-Ataque</span>
-                {activeStance === 'counter' && <span className="touchline-shout-indicator" aria-hidden="true" />}
-              </button>
+            <div className="cockpit-momentum-zones">
+              <div className={`cockpit-zone z-control ${myMomentum < 30 ? 'active' : ''}`}>
+                <span>CONTROLE</span>
+              </div>
+              <div className={`cockpit-zone z-press ${myMomentum >= 30 && myMomentum < 60 ? 'active' : ''}`}>
+                <span>PRESSÃO (30+)</span>
+              </div>
+              <div className={`cockpit-zone z-domain ${myMomentum >= 60 && myMomentum < 85 ? 'active' : ''}`}>
+                <span>DOMÍNIO (60+)</span>
+              </div>
+              <div className={`cockpit-zone z-avalanche ${myMomentum >= 85 ? 'active' : ''}`}>
+                <span>AVALANCHE (85+)</span>
+              </div>
+              <div className="cockpit-momentum-marker" style={{ left: `${Math.max(3, Math.min(97, myMomentum))}%` }}>
+                <span className="cockpit-momentum-marker-tag">{myMomentum}%</span>
+              </div>
+            </div>
 
-              <button
-                type="button"
-                role="radio"
-                aria-checked={activeStance === 'balanced'}
-                className={`touchline-shout-btn ${activeStance === 'balanced' ? 'active' : ''}`}
-                disabled={quickTacticBusy}
-                onClick={() => quickApplyTacticalStance('balanced')}
-                title="Equilibrar: postura balanceada com linhas médias"
-              >
-                <span className="touchline-shout-icon">
-                  <ShieldIcon size={14} color="#34d399" />
-                </span>
-                <span className="touchline-shout-label">Equilibrar</span>
-                {activeStance === 'balanced' && <span className="touchline-shout-indicator" aria-hidden="true" />}
-              </button>
-
-              {/* Ações Rápidas em 1 Clique recomendadas pelo Staff */}
-              {mostExhaustedStarter && (
-                <button
-                  type="button"
-                  className="touchline-shout-btn btn-quick-intervention"
-                  style={{ border: '1.5px solid #f59e0b', color: '#fef3c7' }}
-                  disabled={busy}
-                  onClick={() =>
-                    quickApplySubstitution(
-                      mostExhaustedStarter.target.id,
-                      mostExhaustedStarter.sub.id
-                    )
-                  }
-                  title={`Substituição Imediata: trocar ${mostExhaustedStarter.target.name} por ${mostExhaustedStarter.sub.name}`}
-                >
-                  <span className="touchline-shout-icon">
-                    <RefreshIcon size={14} color="#f59e0b" />
-                  </span>
-                  <span className="touchline-shout-label">Trocar Jogador Esgotado</span>
-                </button>
-              )}
+            {/* Momentum Resource Skills with Zone Gates & Costs */}
+            <div className="touchline-shouts-bar cockpit-triggers-row" role="group" aria-label="Gatilhos de Momentum">
+              {momentumSkills.map((skill) => {
+                const isGoldenOrAvalanche = skill.id === 'JANELA_DE_OURO' || skill.id === 'AVALANCHE_TOTAL';
+                return (
+                  <button
+                    key={skill.id}
+                    type="button"
+                    className={`touchline-shout-btn ${isGoldenOrAvalanche ? 'cockpit-golden-btn' : ''} ${skill.active ? 'active' : ''}`}
+                    disabled={quickTacticBusy || !skill.unlocked}
+                    onClick={() => triggerMomentumSkill(skill.id)}
+                    title={skill.description}
+                  >
+                    {skill.id === 'PRESSIONAR' && <SoccerBallIcon size={13} color="#f59e0b" />}
+                    {skill.id === 'JANELA_DE_OURO' && <LightningIcon size={13} color={skill.unlocked ? '#181204' : '#94a3b8'} />}
+                    {skill.id === 'AVALANCHE_TOTAL' && <FlameIcon size={13} color={skill.unlocked ? '#181204' : '#94a3b8'} />}
+                    {skill.id === 'SEGURAR_JOGO' && <ShieldIcon size={13} color="#38bdf8" />}
+                    <span className="touchline-shout-label">{skill.label}</span>
+                    <span className="cockpit-skill-cost-tag">
+                      {skill.cost > 0 ? `-${skill.cost}` : skill.id === 'SEGURAR_JOGO' ? 'Rival 62+' : `${skill.minZone}+`}
+                    </span>
+                  </button>
+                );
+              })}
 
               {hasHighLineVulnerability && (
                 <button
@@ -1529,18 +2359,79 @@ export function LiveMatchPage() {
                       pressing: 'MEDIUM',
                     })
                   }
-                  title="Baixar Linha Defensiva para equilibrada e neutralizar infiltrações adversárias"
                 >
-                  <span className="touchline-shout-icon">
-                    <ShieldIcon size={14} color="#ef4444" />
-                  </span>
-                  <span className="touchline-shout-label">Baixar Linha Defensiva</span>
+                  <ShieldIcon size={14} color="#ef4444" />
+                  <span className="touchline-shout-label">Baixar Linha</span>
                 </button>
               )}
             </div>
           </div>
 
-          {/* TOUCHLINE ASSISTANT & CAUSAL ALERTS CARD */}
+          {/* FASE 3: VESTIÁRIO DE INTERVALO NO COCKPIT */}
+          {pauseReason === 'halftime' && (
+            <div className="card cockpit-halftime-card">
+              <div className="cockpit-halftime-header">
+                <div className="cockpit-halftime-title-group">
+                  <span className="cockpit-halftime-badge">INTERVALO · 45&apos;</span>
+                  <strong className="cockpit-halftime-headline">{halftimeBriefing.headline}</strong>
+                </div>
+                <div className="cockpit-halftime-actions-top">
+                  <button
+                    type="button"
+                    className="btn-secondary cockpit-ht-board-btn"
+                    onClick={() => openTacticalCenter('halftime')}
+                  >
+                    <TacticsIcon size={13} color="#cbd5e1" />
+                    <span>Quadro Tático</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary cockpit-ht-resume-btn"
+                    onClick={handleResumeSecondHalf}
+                  >
+                    <span>Iniciar 2º Tempo</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="cockpit-halftime-briefing">
+                <p className="cockpit-halftime-line">{halftimeBriefing.tacticalNote}</p>
+              </div>
+
+              <div className="cockpit-halftime-tones-section">
+                <div className="cockpit-halftime-tones-header">
+                  <span className="cockpit-halftime-tones-label">CONVERSA DE VESTIÁRIO (ESCOLHA O TOM)</span>
+                  {halftimeTalkResult && (
+                    <span className="cockpit-halftime-feedback-pill">
+                      {halftimeTalkResult.label}: {halftimeTalkResult.effect}
+                    </span>
+                  )}
+                </div>
+                <div className="cockpit-ht-tones-grid">
+                  {halftimeBriefing.choices.map((choice) => {
+                    const isSelected = halftimeTalkResult?.label === choice.label;
+                    return (
+                      <button
+                        key={choice.id}
+                        type="button"
+                        disabled={halftimeTalkBusy || halftimeTalkResult !== null}
+                        className={`cockpit-ht-tone-btn ${isSelected ? 'is-selected' : ''}`}
+                        onClick={() => handleApplyHalftimeTone(choice)}
+                      >
+                        <div className="cockpit-ht-tone-top">
+                          <strong className="cockpit-ht-tone-label">{choice.label}</strong>
+                          <span className="cockpit-ht-tone-morale">{choice.moraleEffectLabel}</span>
+                        </div>
+                        <span className="cockpit-ht-tone-sub">{choice.subtitle}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TOUCHLINE ASSISTANT CAUSAL ALERTS */}
           <TouchlineAssistantCard
             myClub={effectiveClub}
             myTactic={effectiveTactic}
@@ -1558,129 +2449,91 @@ export function LiveMatchPage() {
             onApplySubstitution={quickApplySubstitution}
             onApplyTacticalChange={quickApplyTacticalChange}
           />
+        </main>
 
-          {/* MAIN LIVE MATCH CONTROLS BAR DIRECTLY BELOW TOUCHLINE SHOUTS */}
-          <div className="card live-controls-top">
-            <div className="live-controls-actions">
-              <button
-                type="button"
-                className="btn-live-secondary tactical"
-                onClick={() => openTacticalCenter('manual')}
-                title="Abrir prancheta tática e fazer alterações no time"
-              >
-                <TacticsIcon size={15} color="currentColor" style={{ marginRight: 6 }} /> Prancheta Tática
-              </button>
-            </div>
-
-            <div className="live-speed-picker">
-              <span className="live-speed-label">Velocidade:</span>
-              {SPEED_OPTIONS.map((option) => {
-                /**
-                 * A velocidade bloqueada aparece, com cadeado, em vez de sumir.
-                 *
-                 * Escondê-la seria mais limpo e diria menos: o jogador nunca saberia que "Muito rápido"
-                 * existe, e o que o premium oferece ficaria invisível. Mostrando, o limite vira informação.
-                 */
-                const liberada = canUseMatchSpeed(gameMode, option.key);
-                return (
-                  <button
-                    key={option.key}
-                    type="button"
-                    className={`live-speed-option${speedKey === option.key ? ' active' : ''}${liberada ? '' : ' live-speed-locked'}`}
-                    onClick={() => (liberada ? setSpeedKey(option.key) : setSpeedBlock(explainBlock(gameMode, 'speed')))}
-                    title={liberada ? undefined : explainBlock(gameMode, 'speed')}
-                    aria-disabled={!liberada}
-                  >
-                    {liberada ? option.label : `${option.label} (Bloqueado)`}
-                  </button>
-                );
-              })}
-            </div>
-            {speedBlock && (
-              <p className="live-speed-aviso" role="status">
-                {speedBlock}
-              </p>
-            )}
-          </div>
-
-          {/* Stats and Commentary Feed */}
-          <div className="live-match-columns">
-            <div className="live-match-col">
-              {/* Radar & Momentum ou Prancheta Tática Ao Vivo */}
-              <div className="card">
-                <div className="live-pitch-tabs" role="tablist" aria-label="Visualização do Campo">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={pitchViewTab === 'RADAR_2D'}
-                    className={`btn-live-pitch-tab ${pitchViewTab === 'RADAR_2D' ? 'active' : ''}`}
-                    onClick={() => setPitchViewTab('RADAR_2D')}
-                  >
-                    <EyeIcon size={14} style={{ marginRight: 6 }} /> Radar 2D de Jogo
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={pitchViewTab === 'TACTICAL_XI'}
-                    className={`btn-live-pitch-tab ${pitchViewTab === 'TACTICAL_XI' ? 'active' : ''}`}
-                    onClick={() => setPitchViewTab('TACTICAL_XI')}
-                  >
-                    <TacticsIcon size={14} style={{ marginRight: 6 }} /> Prancheta Tática Ao Vivo
-                  </button>
-                </div>
-
-                {pitchViewTab === 'RADAR_2D' ? (
-                  <PitchVisualizer
-                    homeClub={homeClub}
-                    awayClub={awayClub}
-                    homeTactic={live.homeTactic}
-                    awayTactic={live.awayTactic}
-                    mySide={mySide}
-                    events={live.events}
-                    currentMinute={clockMinute}
-                    momentum={momentum}
-                    isPaused={pauseReason !== null}
-                    speedKey={speedKey}
-                    homeGoals={live.homeGoals}
-                    awayGoals={live.awayGoals}
-                  />
-                ) : (
-                  <div className="live-pitchfield-compact-container">
-                    <PitchField
-                      compact
-                      formation={effectiveTactic.formation}
-                      squad={effectiveClub.players}
-                      selections={effectiveTactic.lineup.map((s) => s.playerId)}
-                      currentMatchMinute={clockMinute}
-                      bookedPlayerIds={myBookedIds}
-                      vacatedPlayerIds={vacatedIds}
-                      defensiveLine={effectiveTactic.defensiveLine ?? defensiveLineOf(effectiveTactic)}
-                      attackStyle={effectiveTactic.attackStyle}
-                      pressing={effectiveTactic.pressing}
-                      kitColor={clubColor}
-                      clubSlug={effectiveClub.slug}
-                      isAway={effectiveSide === 'away'}
-                      onSelect={() => {}}
-                    />
-                  </div>
-                )}
-
-                <h2>Momentum do jogo</h2>
-                <p className="momentum-label">{momentumLabel(momentum, homeClub.name, awayClub.name)}</p>
-                <div className="stat-row-bar momentum-bar">
-                  <span className="stat-row-bar-home" style={{ width: `${momentum}%` }} />
-                  <span className="stat-row-bar-away" style={{ width: `${100 - momentum}%` }} />
-                </div>
-                <div className="momentum-pointer-track">
-                  <span className="momentum-pointer" style={{ left: `${Math.max(4, Math.min(96, momentum))}%` }}>
-                    ▲
-                  </span>
-                </div>
+        {/* RIGHT COLUMN: 3-TIER LANCES FEED, STATS & MODO DIRETO / MODO TÁTICO */}
+        <aside className="cockpit-right-sidebar">
+          <div className="card live-lances-card cockpit-feed-card">
+            <div className="cockpit-feed-tabs-row">
+              <div className="cockpit-feed-tabs">
+                <button
+                  type="button"
+                  className={`cockpit-feed-tab ${rightSidebarTab === 'LANCES' ? 'active' : ''}`}
+                  onClick={() => setRightSidebarTab('LANCES')}
+                >
+                  LANCES AO VIVO
+                </button>
+                <button
+                  type="button"
+                  className={`cockpit-feed-tab ${rightSidebarTab === 'STATS' ? 'active' : ''}`}
+                  onClick={() => setRightSidebarTab('STATS')}
+                >
+                  ESTATÍSTICAS
+                </button>
               </div>
 
-              {/* Match Statistics */}
-              <div className="card">
-                <h2>Estatísticas</h2>
+              {rightSidebarTab === 'LANCES' && (
+                <label className="cockpit-filter-toggle" title="Ocultar lances de rotina e exibir apenas jogadas relevantes/críticas">
+                  <span>Só importantes</span>
+                  <input
+                    type="checkbox"
+                    checked={onlyImportantEvents}
+                    onChange={(e) => setOnlyImportantEvents(e.target.checked)}
+                  />
+                </label>
+              )}
+            </div>
+
+            {rightSidebarTab === 'LANCES' ? (
+              <>
+                {roundGoalNotices.length > 0 && (
+                  <div className="cockpit-round-feed-notices">
+                    {roundGoalNotices.slice(0, 2).map((notice) => (
+                      <div
+                        key={notice.id}
+                        className="cockpit-round-feed-item"
+                        onClick={() => setSpiedMatchId(notice.matchId)}
+                        title="Clique para espiar esta partida da rodada"
+                      >
+                        <span className="cockpit-round-feed-badge">{notice.minute}' · RODADA</span>
+                        <span>{notice.headline}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {filteredEvents.length === 0 && (
+                  <p className="muted" style={{ fontSize: '0.84rem', margin: '12px 0' }}>
+                    {live.events.length === 0
+                      ? 'A partida ainda não teve lances.'
+                      : 'Nenhum lance importante registrado ainda.'}
+                  </p>
+                )}
+                <ul className="lances-feed cockpit-lances-feed">
+                  {filteredEvents.map((event: MatchEvent, i) => {
+                    const tier = classifyEventImportance(event);
+                    const isSelected = selectedReplayEvent === event;
+                    return (
+                      <li
+                        key={i}
+                        onClick={() => setSelectedReplayEvent((prev) => (prev === event ? null : event))}
+                        className={`lance-item lance-${eventVariant(event)} cockpit-lance-tier-${tier}${isSelected ? ' is-selected-replay' : ''}`}
+                        title="Clique para destacar este lance no Campo 2D"
+                      >
+                        <span className="lance-item-icon">{eventIcon(event)}</span>
+                        <div className="cockpit-lance-body">
+                          <div className="cockpit-lance-top">
+                            <strong>{formatMatchEventMinute(event, clockFormat)}</strong>
+                            {event.type === 'goal' && <span className="cockpit-lance-badge-goal">GOL</span>}
+                          </div>
+                          <span className="cockpit-lance-desc">{event.description}</span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            ) : (
+              <div style={{ marginTop: 8 }}>
                 <MatchStatsPanel
                   home={{
                     shots: live.homeShots,
@@ -1704,24 +2557,210 @@ export function LiveMatchPage() {
                   }}
                 />
               </div>
+            )}
+          </div>
+
+          {/* BOTTOM RIGHT: MODO DIRETO | MODO TÁTICO PANEL */}
+          <div className="card cockpit-mode-card">
+            <div className="cockpit-mode-header">
+              <button
+                type="button"
+                className={`cockpit-mode-switch-btn ${tacticControlMode === 'DIRECT' ? 'active' : ''}`}
+                onClick={() => setTacticControlMode('DIRECT')}
+              >
+                Modo Direto
+              </button>
+              <span className="muted">|</span>
+              <button
+                type="button"
+                className={`cockpit-mode-switch-btn ${tacticControlMode === 'TACTICAL' ? 'active' : ''}`}
+                onClick={() => setTacticControlMode('TACTICAL')}
+              >
+                <span className="cockpit-fm-dot" /> Modo Tático
+              </button>
             </div>
 
-            {/* Commentary Lances */}
-            <div className="card live-lances-card">
-              <h2>Lances</h2>
-              {live.events.length === 0 && <p className="muted">A partida ainda não teve lances.</p>}
-              <ul className="lances-feed">
-                {[...live.events].reverse().map((event: MatchEvent, i) => (
-                  <li key={i} className={`lance-item lance-${eventVariant(event)}`}>
-                    <span className="lance-item-icon">{eventIcon(event)}</span>
-                    <strong>{formatMatchEventMinute(event, clockFormat)}</strong>
-                    <span>{event.description}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            {tacticControlMode === 'DIRECT' ? (
+              <div className="cockpit-brasfoot-quick">
+                <button
+                  type="button"
+                  className={`cockpit-bf-pill ${activeStance === 'press' ? 'active' : ''}`}
+                  disabled={quickTacticBusy}
+                  onClick={() => quickApplyTacticalStance('press')}
+                >
+                  <FlameIcon size={12} color="#f59e0b" style={{ marginRight: 4 }} />
+                  Ataque Total
+                </button>
+                <button
+                  type="button"
+                  className={`cockpit-bf-pill ${activeStance === 'balanced' ? 'active' : ''}`}
+                  disabled={quickTacticBusy}
+                  onClick={() => quickApplyTacticalStance('balanced')}
+                >
+                  <ShieldIcon size={12} color="#34d399" style={{ marginRight: 4 }} />
+                  Equilibrado
+                </button>
+                <button
+                  type="button"
+                  className={`cockpit-bf-pill ${activeStance === 'counter' ? 'active' : ''}`}
+                  disabled={quickTacticBusy}
+                  onClick={() => quickApplyTacticalStance('counter')}
+                >
+                  <SwordsIcon size={12} color="#38bdf8" style={{ marginRight: 4 }} />
+                  Contra-Ataque
+                </button>
+              </div>
+            ) : (
+              <div className="cockpit-fm-sliders">
+                <div className="cockpit-fm-row">
+                  <span className="cockpit-fm-label">Mentalidade</span>
+                  <div className="cockpit-fm-seg">
+                    {(['defensive', 'balanced', 'attacking'] as Mentality[]).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        disabled={quickTacticBusy}
+                        className={`cockpit-fm-seg-btn ${effectiveTactic.mentality === m ? 'active' : ''}`}
+                        onClick={() => quickUpdateTacticField('mentality', m)}
+                      >
+                        {m === 'defensive' ? 'Def.' : m === 'balanced' ? 'Equil.' : 'Ofens.'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="cockpit-fm-row">
+                  <span className="cockpit-fm-label">Linha Defensiva</span>
+                  <div className="cockpit-fm-seg">
+                    {(['DEEP', 'BALANCED', 'HIGH'] as DefensiveLineHeight[]).map((line) => {
+                      const currentLine = effectiveTactic.defensiveLine ?? defensiveLineOf(effectiveTactic);
+                      return (
+                        <button
+                          key={line}
+                          type="button"
+                          disabled={quickTacticBusy}
+                          className={`cockpit-fm-seg-btn ${currentLine === line ? 'active' : ''}`}
+                          onClick={() => quickUpdateTacticField('defensiveLine', line)}
+                        >
+                          {line === 'DEEP' ? 'Baixa' : line === 'BALANCED' ? 'Média' : 'Alta'}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="cockpit-fm-row">
+                  <span className="cockpit-fm-label">Pressão</span>
+                  <div className="cockpit-fm-seg">
+                    {(['LOW_BLOCK', 'MEDIUM', 'HIGH_PRESS'] as PressingIntensity[]).map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        disabled={quickTacticBusy}
+                        className={`cockpit-fm-seg-btn ${effectiveTactic.pressing === p ? 'active' : ''}`}
+                        onClick={() => quickUpdateTacticField('pressing', p)}
+                      >
+                        {p === 'LOW_BLOCK' ? 'Baixa' : p === 'MEDIUM' ? 'Média' : 'Alta'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
+
+          {/* FASE 3: APÓS O APITO — COLETIVA RÁPIDA */}
+          <div className={`card cockpit-postmatch-card ${isFullTime || match.status === 'SIMULATED' ? 'is-unlocked' : 'is-locked'}`}>
+            <div className="cockpit-postmatch-header">
+              <div className="cockpit-postmatch-title-row">
+                <SquadIcon size={14} color={isFullTime || match.status === 'SIMULATED' ? '#f59e0b' : '#64748b'} />
+                <span className="cockpit-postmatch-title">APÓS O APITO · COLETIVA RÁPIDA</span>
+              </div>
+              {(answeredPressOptions.length > 0 || pressDelegated) && (
+                <div className="cockpit-postmatch-deltas">
+                  <span className={`cockpit-pm-delta-tag ${totalPressMoraleDelta >= 0 ? 'is-pos' : 'is-neg'}`}>
+                    Moral {totalPressMoraleDelta >= 0 ? `+${totalPressMoraleDelta}` : totalPressMoraleDelta}
+                  </span>
+                  <span className={`cockpit-pm-delta-tag ${totalPressBoardDelta >= 0 ? 'is-pos' : 'is-neg'}`}>
+                    Diretoria {totalPressBoardDelta >= 0 ? `+${totalPressBoardDelta}` : totalPressBoardDelta}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {!(isFullTime || match.status === 'SIMULATED') ? (
+              <p className="cockpit-postmatch-locked-hint">
+                Disponível ao apito final: 2 perguntas rápidas da imprensa com impacto direto na moral do elenco e na confiança da diretoria.
+              </p>
+            ) : pressDelegated ? (
+              <div className="cockpit-postmatch-delegated-box">
+                <p className="cockpit-pm-delegated-text">
+                  O Auxiliar Técnico atendeu a imprensa com discurso equilibrado (Moral +1 · Diretoria +1).
+                </p>
+                <button
+                  type="button"
+                  className="btn-primary cockpit-pm-finish-btn"
+                  onClick={handleGoToResult}
+                >
+                  Avançar para o Resumo da Rodada
+                </button>
+              </div>
+            ) : (
+              <div className="cockpit-postmatch-body">
+                {quickPressQuestions.map((q) => {
+                  const chosen = pressAnswers[q.id];
+                  return (
+                    <div key={q.id} className="cockpit-pm-question-box">
+                      <div className="cockpit-pm-outlet">{q.outlet}</div>
+                      <p className="cockpit-pm-prompt">{q.question}</p>
+                      <div className="cockpit-pm-options">
+                        {q.options.map((opt) => {
+                          const isChosen = chosen?.id === opt.id;
+                          return (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              disabled={Boolean(chosen)}
+                              className={`cockpit-pm-option-btn ${isChosen ? 'is-chosen' : ''}`}
+                              onClick={() => handleAnswerQuickPress(q.id, opt)}
+                            >
+                              <div className="cockpit-pm-option-top">
+                                <span className="cockpit-pm-tone-badge">{opt.label}</span>
+                                <span className="cockpit-pm-impact-preview">
+                                  Moral {opt.moraleDelta >= 0 ? `+${opt.moraleDelta}` : opt.moraleDelta} · Diretoria {opt.boardDelta >= 0 ? `+${opt.boardDelta}` : opt.boardDelta}
+                                </span>
+                              </div>
+                              <span className="cockpit-pm-quote">&ldquo;{opt.quote}&rdquo;</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <div className="cockpit-pm-footer-actions">
+                  {answeredPressOptions.length === 0 && (
+                    <button
+                      type="button"
+                      className="btn-secondary cockpit-pm-delegate-btn"
+                      onClick={handleDelegateQuickPress}
+                    >
+                      Delegar ao Auxiliar
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn-primary cockpit-pm-finish-btn"
+                    onClick={handleGoToResult}
+                  >
+                    Resumo da Rodada
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </aside>
       </div>
 
       {/* DEDICATED TACTICAL COMMAND POP-UP MODAL */}

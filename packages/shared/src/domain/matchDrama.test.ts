@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { buildMatchTimelineMarkers, computeMomentumBlocks, isStoppageTimeClimax, buildMatchNarrativeReplay } from './matchDrama.js';
+import {
+  buildMatchTimelineMarkers,
+  computeMomentumBlocks,
+  isStoppageTimeClimax,
+  buildMatchNarrativeReplay,
+  computeLiveMomentumResource,
+  getMomentumSkillStatuses,
+  computeAssistantSubSuggestions,
+  buildHalftimeAssistantBriefing,
+  buildQuickPostMatchPressQuestions,
+} from './matchDrama.js';
 import { MatchEvent, MatchResult } from './match.js';
+import { Player } from './player.js';
 
 describe('matchDrama domain logic', () => {
   const mockEvents: MatchEvent[] = [
@@ -29,8 +40,8 @@ describe('matchDrama domain logic', () => {
 
   it('detects stoppage time climax correctly', () => {
     expect(isStoppageTimeClimax(45, '1T', 0, 0, true)).toBe(false);
-    expect(isStoppageTimeClimax(91, '2T', 1, 1, true)).toBe(true); // Empate em mata-mata nos acréscimos (91 > 90)
-    expect(isStoppageTimeClimax(92, '2T', 2, 1, false)).toBe(true); // Diferença de 1 gol nos acréscimos
+    expect(isStoppageTimeClimax(91, '2T', 1, 1, true)).toBe(true);
+    expect(isStoppageTimeClimax(92, '2T', 2, 1, false)).toBe(true);
   });
 
   it('builds narrative replay items', () => {
@@ -46,5 +57,134 @@ describe('matchDrama domain logic', () => {
     const replay = buildMatchNarrativeReplay(result, 'Mandante', 'Visitante');
     expect(replay.length).toBeGreaterThan(0);
     expect(replay[0].title).toContain('GOL');
+  });
+
+  it('computes live momentum resource with zone gates and cost deduction', () => {
+    const stateBefore = computeLiveMomentumResource({
+      events: [
+        { minute: 14, type: 'goal', team: 'home', playerId: 'p1', description: 'Gol!' },
+        { minute: 16, type: 'chance', team: 'home', playerId: 'p2', description: 'Grande chance!', xg: 0.4 },
+      ],
+      currentMinute: 18,
+      mySide: 'home',
+      myPossession: 62,
+      myShots: 6,
+      opponentShots: 1,
+      myCorners: 4,
+      opponentCorners: 0,
+    });
+
+    expect(stateBefore.rawMomentum).toBeGreaterThanOrEqual(60);
+    expect(stateBefore.zone).toMatch(/DOMINIO|AVALANCHE/);
+
+    // Spend 40 momentum on Janela de Ouro at minute 18
+    const stateAfterSpend = computeLiveMomentumResource({
+      events: [
+        { minute: 14, type: 'goal', team: 'home', playerId: 'p1', description: 'Gol!' },
+        { minute: 16, type: 'chance', team: 'home', playerId: 'p2', description: 'Grande chance!', xg: 0.4 },
+      ],
+      currentMinute: 18,
+      mySide: 'home',
+      myPossession: 62,
+      myShots: 6,
+      opponentShots: 1,
+      myCorners: 4,
+      opponentCorners: 0,
+      spentMomentum: 40,
+      lastSpendMinute: 18,
+    });
+
+    expect(stateAfterSpend.effectiveMomentum).toBe(stateBefore.rawMomentum - 40);
+    expect(stateAfterSpend.remainingDebt).toBe(40);
+  });
+
+  it('unlocks momentum skills according to zone thresholds and rival dominance', () => {
+    const skillsAt65 = getMomentumSkillStatuses(65, 'JANELA_DE_OURO');
+    expect(skillsAt65.find((s) => s.id === 'PRESSIONAR')?.unlocked).toBe(true);
+    expect(skillsAt65.find((s) => s.id === 'JANELA_DE_OURO')?.unlocked).toBe(true);
+    expect(skillsAt65.find((s) => s.id === 'JANELA_DE_OURO')?.active).toBe(true);
+    expect(skillsAt65.find((s) => s.id === 'AVALANCHE_TOTAL')?.unlocked).toBe(false);
+    expect(skillsAt65.find((s) => s.id === 'SEGURAR_JOGO')?.unlocked).toBe(false);
+
+    const skillsUnderRivalDomain = getMomentumSkillStatuses(32, null);
+    expect(skillsUnderRivalDomain.find((s) => s.id === 'SEGURAR_JOGO')?.unlocked).toBe(true);
+  });
+
+  it('prioritizes booked + tired starters in assistant substitution suggestions', () => {
+    const starters = [
+      { id: 's1', name: 'Bruno Ribeiro', position: 'MID', overall: 80, fatigue: 20 },
+      { id: 's2', name: 'Dani Silva', position: 'ATT', overall: 82, fatigue: 30 },
+    ] as unknown as Player[];
+    const bench = [
+      { id: 'b1', name: 'Lucas Mendes', position: 'MID', overall: 78, fatigue: 0 },
+      { id: 'b2', name: 'Pedro Rocha', position: 'ATT', overall: 79, fatigue: 0 },
+    ] as unknown as Player[];
+
+    const staminaMap = new Map([
+      ['s1', 58],
+      ['s2', 49],
+    ]);
+    const ratingMap = new Map([
+      ['s1', 6.5],
+      ['s2', 6.4],
+    ]);
+
+    const suggestions = computeAssistantSubSuggestions({
+      starters,
+      bench,
+      staminaByPlayerId: staminaMap,
+      ratingByPlayerId: ratingMap,
+      bookedPlayerIds: new Set(['s1']),
+      vacatedPlayerIds: new Set(),
+      markingStyle: 'BALANCED',
+      currentMinute: 62,
+    });
+
+    expect(suggestions).toHaveLength(2);
+    expect(suggestions[0].outPlayerId).toBe('s1');
+    expect(suggestions[0].inPlayerId).toBe('b1');
+    expect(suggestions[0].reasonCode).toBe('YELLOW_AND_TIRED');
+    expect(suggestions[1].outPlayerId).toBe('s2');
+    expect(suggestions[1].reasonCode).toBe('CRITICAL_FATIGUE');
+  });
+
+  it('builds halftime assistant briefing with 3 direct locker room tones', () => {
+    const briefing = buildHalftimeAssistantBriefing({
+      myGoals: 0,
+      oppGoals: 1,
+      myShots: 7,
+      oppShots: 3,
+      myXg: 1.15,
+      oppXg: 0.45,
+      myPossession: 60,
+      bookedCount: 2,
+      exhaustedCount: 1,
+    });
+
+    expect(briefing.headline).toContain('0 x 1');
+    expect(briefing.tacticalNote).toContain('2 titulares pendurados');
+    expect(briefing.choices).toHaveLength(3);
+    expect(briefing.choices.map((c) => c.id)).toEqual(['COBRAR', 'APOIAR', 'CALAR']);
+    expect(briefing.choices.find((c) => c.id === 'APOIAR')?.recommended).toBe(true);
+  });
+
+  it('builds 2 quick post-match press conference questions with morale & board deltas', () => {
+    const questions = buildQuickPostMatchPressQuestions({
+      myClubName: 'Mafra FC',
+      oppClubName: 'Nacional',
+      myGoals: 2,
+      oppGoals: 1,
+      myShots: 11,
+      oppShots: 6,
+      myPressRecoveries: 6,
+      hadSubGoal: true,
+    });
+
+    expect(questions).toHaveLength(2);
+    expect(questions[0].question).toContain('2 x 1');
+    expect(questions[0].options).toHaveLength(3);
+    expect(questions[0].options[0].moraleDelta).toBeGreaterThan(0);
+    expect(questions[0].options[0].boardDelta).toBeGreaterThan(0);
+    expect(questions[1].id).toBe('qp_bench_impact');
   });
 });
