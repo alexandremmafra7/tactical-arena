@@ -334,8 +334,8 @@ export function computeTeamStrength(club: Club, tactic: Tactic, offPitchPlayerId
   const players = withSides.map((e) => e.player);
   const restDefence = computeRestDefenceCompatibility(withSides, restDefenceShapeOf(tactic));
   const teamwork = averageOf(players, teamworkOf);
-  const anticipation = averageOf(players, (p) => p.detailedAttributes.ANTICIPATION);
-  const firstTouch = averageOf(players, (p) => p.detailedAttributes.BALL_CONTROL);
+  const anticipation = averageOf(players, (p) => p.detailedAttributes?.ANTICIPATION ?? 50);
+  const firstTouch = averageOf(players, (p) => p.detailedAttributes?.BALL_CONTROL ?? 50);
   const teamComposure = averageOf(players, composureOf);
   const missingPlayers = Math.max(0, FULL_SIDE - withSides.length);
   const disadvantage = numericalDisadvantageFactors(missingPlayers);

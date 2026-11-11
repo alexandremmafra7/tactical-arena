@@ -13,7 +13,7 @@ import react from '@vitejs/plugin-react';
  * When the game stops changing under its saves, replace this with a hand-written number bumped only on a
  * breaking change, so a player's career survives an update that does not need to break it.
  */
-const BUILD_STAMP = 'v0.1.0';
+const BUILD_STAMP = 'v0.1.3';
 
 export default defineConfig({
   plugins: [react()],

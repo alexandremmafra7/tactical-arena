@@ -112,10 +112,15 @@ export function DashboardPage() {
       {!loading && clubs.length === 0 && (
         <section className="card">
           <h2>Meus clubes</h2>
-          <p>Você ainda não tem um clube. Inicie uma carreira pela Central de Carreiras.</p>
-          <Link className="btn-secondary" to="/">
-            Ir para a Central de Carreiras
-          </Link>
+          <p>Você ainda não tem um clube. Inicie uma carreira pela Central de Carreiras ou aceite uma proposta na tela de Carreira.</p>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
+            <Link className="btn-secondary" to="/">
+              Ir para a Central de Carreiras
+            </Link>
+            <Link className="btn-secondary" to="/career">
+              Ver Propostas de Emprego
+            </Link>
+          </div>
         </section>
       )}
 

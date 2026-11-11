@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: tactical-arena-fc
+    env: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: APP_MODE
+        value: hosted
+      - key: DESKTOP_MODE
+        value: "false"
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 10000
+      - key: JWT_SECRET
+        generateValue: true

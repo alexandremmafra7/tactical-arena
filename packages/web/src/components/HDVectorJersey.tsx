@@ -22,6 +22,9 @@ export interface HDVectorJerseyProps {
 export function HDVectorJersey({
   club,
   isAway = false,
+  awayPrimaryColor,
+  awaySecondaryColor,
+  awayKitPattern,
   size = 160,
   className = '',
   masterSponsorName,
@@ -38,6 +41,9 @@ export function HDVectorJersey({
       primaryColor={club.primaryColor}
       secondaryColor={club.secondaryColor}
       kitPattern={club.kitPattern}
+      awayPrimaryColor={awayPrimaryColor ?? club.awayPrimaryColor}
+      awaySecondaryColor={awaySecondaryColor ?? club.awaySecondaryColor}
+      awayKitPattern={awayKitPattern ?? club.awayKitPattern}
       size={size}
       className={`hd-vector-jersey-container ${className}`}
       isAway={isAway}

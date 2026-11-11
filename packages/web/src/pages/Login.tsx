@@ -1,6 +1,6 @@
 import { useState, FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { listMyClubs, login, register } from '../api/client.js';
+import { listMyClubs, login, register, setOfflineMode } from '../api/client.js';
 import { useAuth } from '../auth/AuthContext.js';
 import { GameHeader } from '../components/GameHeader.js';
 import { ServerSettingsModal } from '../components/ServerSettingsModal.js';
@@ -20,6 +20,7 @@ export function LoginPage() {
     setError(null);
     setLoading(true);
     try {
+      setOfflineMode(false);
       const result = mode === 'login' ? await login(email, password) : await register(email, password);
       signIn(result.token, result.userId);
       const clubs = await listMyClubs().catch(() => []);
@@ -35,6 +36,7 @@ export function LoginPage() {
     setError(null);
     setLoading(true);
     try {
+      setOfflineMode(false);
       const guestEmail = 'treinador@tacticalarena.local';
       const guestPass = 'treinador123';
       let result;

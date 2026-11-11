@@ -61,14 +61,17 @@ export function applyUiScale(option: UiScaleOption): number {
     } catch {}
   }
 
-  // 1. Electron webFrame native zoom (mantém vetores e nitidez perfeita)
+  // Mantém o webFrame nativo em 1.0 para evitar loop infinito de evento 'resize'
+  // (webFrame.setZoomFactor altera window.innerWidth/innerHeight e dispara resize em loop)
   if (typeof window !== 'undefined' && window.electronAPI?.setZoomFactor) {
     try {
-      window.electronAPI.setZoomFactor(factor);
+      if (window.electronAPI.getZoomFactor && window.electronAPI.getZoomFactor() !== 1) {
+        window.electronAPI.setZoomFactor(1);
+      }
     } catch {}
   }
 
-  // 2. CSS zoom fallback (para navegador ou renderizadores Chromium)
+  // CSS zoom (não altera window.innerWidth/innerHeight nem dispara loop de resize)
   if (typeof document !== 'undefined' && document.documentElement) {
     try {
       (document.documentElement.style as any).zoom = String(factor);
@@ -117,7 +120,7 @@ export function initUiScale(): void {
 
   // Recalcular quando redimensionar ou alternar tela cheia se estiver em 'auto'
   window.addEventListener('resize', () => {
-    if (currentOption === 'auto') {
+    if (currentOption === 'auto' && calculateAutoScale() !== currentFactor) {
       applyUiScale('auto');
     }
   });

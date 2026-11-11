@@ -751,7 +751,7 @@ async function startLeague(leagueId: string, clubIds: string[]): Promise<League>
 
   const existing = await prisma.league.findUnique({ where: { id: leagueId }, select: { season: true } });
   const fixtures = await scheduleLeagueFixtures(
-    generateDoubleRoundRobinFixtures(clubIds),
+    generateDoubleRoundRobinFixtures(clubIds, randomUUID()),
     existing?.season ?? (await getGameState()).seasonYear,
     leagueId,
     clubIds,

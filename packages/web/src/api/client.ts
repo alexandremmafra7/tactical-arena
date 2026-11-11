@@ -10,6 +10,7 @@ import type {
   Loan,
   LoanPlanKey,
   Match,
+  MatchEvent,
   ModPack,
   ModPackImportResult,
   NewsItem,
@@ -54,7 +55,23 @@ export function isCapacitorMobile(): boolean {
   );
 }
 
+export function isHostedWebOrigin(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (isCapacitorMobile()) return false;
+  if (window.location.port === '3001') return true;
+  if (
+    window.location.protocol === 'https:' ||
+    (window.location.protocol === 'http:' &&
+      window.location.port !== '47812' &&
+      window.location.port !== '5173')
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function isOfflineMode(): boolean {
+  if (isHostedWebOrigin()) return false;
   if (typeof localStorage === 'undefined') return false;
   const pref = localStorage.getItem('game_network_mode');
   if (pref === 'online') return false;
@@ -76,6 +93,9 @@ export function getCustomApiBase(): string {
 }
 
 export function getApiBase(): string {
+  if (isHostedWebOrigin()) {
+    return '';
+  }
   const custom = getCustomApiBase();
   if (custom && custom.trim().length > 0) {
     return custom.trim().replace(/\/+$/, '');
@@ -127,10 +147,31 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+async function ensureServerAuthSession(base: string): Promise<{ token: string; userId: string } | null> {
+  try {
+    const email = `tecnico_${Date.now()}_${Math.floor(Math.random() * 10000)}@tactical.fc`;
+    const password = `pass_${Date.now()}`;
+    const res = await fetch(`${base}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data?.token && data?.userId && typeof localStorage !== 'undefined') {
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('userId', data.userId);
+      setOfflineMode(false);
+      return { token: data.token, userId: data.userId };
+    }
+  } catch {}
+  return null;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const base = getApiBase();
   try {
-    const res = await fetch(`${base}${path}`, {
+    let res = await fetch(`${base}${path}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
@@ -140,11 +181,31 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       },
     });
 
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      if (res.status === 401 && (body.error === 'Token inválido' || body.error === 'Token ausente')) {
+    let body = await res.json().catch(() => ({}));
+    if (
+      !res.ok &&
+      res.status === 401 &&
+      !path.startsWith('/auth') &&
+      (body.error === 'Token inválido' || body.error === 'Token ausente')
+    ) {
+      const refreshed = await ensureServerAuthSession(base);
+      if (refreshed) {
+        res = await fetch(`${base}${path}`, {
+          ...options,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(path.startsWith('/saves') ? await localSessionHeaders(base) : {}),
+            ...authHeaders(),
+            ...options.headers,
+          },
+        });
+        body = await res.json().catch(() => ({}));
+      } else if (typeof localStorage !== 'undefined') {
         localStorage.removeItem('token');
       }
+    }
+
+    if (!res.ok) {
       throw new Error(body.error ?? `Erro na requisição (${res.status})`);
     }
     return body as T;
@@ -217,13 +278,13 @@ export function listPlayableCountries(): Promise<string[] | null> {
 }
 
 export function listAvailableClubs(country?: string, division?: number) {
-  if (isOfflineMode()) return localEngine.localListAvailableClubs(country);
+  if (isOfflineMode()) return localEngine.localListAvailableClubs(country, division);
   const params = new URLSearchParams();
   if (country) params.set('country', country);
   if (division !== undefined) params.set('division', String(division));
   const query = params.toString();
   return request<Club[]>(`/clubs/available${query ? `?${query}` : ''}`).catch(() =>
-    localEngine.localListAvailableClubs(country)
+    localEngine.localListAvailableClubs(country, division)
   );
 }
 
@@ -260,9 +321,12 @@ export function foundClub(input: {
   });
 }
 
-export function claimClub(clubId: string) {
+export function claimClub(clubId: string, gameMode?: GameMode) {
   if (isOfflineMode()) return localEngine.localClaimClub(clubId);
-  return request<Club>(`/clubs/${clubId}/claim`, { method: 'POST' }).catch((err) => {
+  return request<Club>(`/clubs/${clubId}/claim`, {
+    method: 'POST',
+    body: JSON.stringify({ gameMode }),
+  }).catch((err) => {
     if (isOfflineMode()) return localEngine.localClaimClub(clubId);
     throw err;
   });
@@ -434,6 +498,24 @@ export function advanceLiveMatch(matchId: string, toMinute: number, interactive 
     method: 'POST',
     body: JSON.stringify({ toMinute, interactive }),
   }).catch(() => localEngine.localAdvanceLiveMatch(matchId, toMinute));
+}
+
+/**
+ * Espia os próximos minutos da partida ao vivo sem avançá-la: devolve os lances que o avanço de verdade vai
+ * produzir até `toMinute`. Só o campo 2D usa, para ter a bola perto do gol quando o lance for revelado.
+ * Qualquer falha (offline, servidor antigo) vira lista vazia: sem espiada o campo só reage ao lance depois.
+ */
+export async function peekLiveMatch(matchId: string, toMinute: number, interactive = true): Promise<MatchEvent[]> {
+  if (isOfflineMode()) return [];
+  try {
+    const res = await request<{ events?: MatchEvent[] }>(`/matches/${matchId}/live/peek`, {
+      method: 'POST',
+      body: JSON.stringify({ toMinute, interactive }),
+    });
+    return Array.isArray(res?.events) ? res.events : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Changes one side's tactic/lineup/subs while the live match is paused. */
@@ -1257,6 +1339,8 @@ export function listSaves() {
 
 export function createNewSave(params: CreateSaveParams | string) {
   if (isOfflineMode()) return localEngine.localCreateNewSave(params) as any;
+  const existingToken = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
+  const existingUserId = typeof localStorage !== 'undefined' ? localStorage.getItem('userId') : null;
   const body = typeof params === 'string' ? { name: params } : params;
   return request<{
     ok: boolean;
@@ -1272,7 +1356,34 @@ export function createNewSave(params: CreateSaveParams | string) {
       if (res.userId) localStorage.setItem('userId', res.userId);
       return res;
     })
-    .catch(() => localEngine.localCreateNewSave(params) as any);
+    .catch(async () => {
+      const fallback = (await localEngine.localCreateNewSave(params)) as any;
+      const base = getApiBase();
+      if (existingToken && !existingToken.startsWith('local-token')) {
+        const check = await fetch(`${base}/clubs`, {
+          headers: { Authorization: `Bearer ${existingToken}` },
+        }).catch(() => null);
+        if (check && check.ok) {
+          localStorage.setItem('token', existingToken);
+          if (existingUserId) localStorage.setItem('userId', existingUserId);
+          setOfflineMode(false);
+          return {
+            ...fallback,
+            token: existingToken,
+            userId: existingUserId ?? fallback.userId,
+          };
+        }
+      }
+      const autoAuth = await ensureServerAuthSession(base);
+      if (autoAuth) {
+        return {
+          ...fallback,
+          token: autoAuth.token,
+          userId: autoAuth.userId,
+        };
+      }
+      return fallback;
+    });
 }
 
 export function loadSave(id: string) {

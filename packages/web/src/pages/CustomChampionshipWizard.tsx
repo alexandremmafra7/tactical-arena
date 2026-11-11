@@ -416,10 +416,6 @@ export function CustomChampionshipWizard() {
     }
   }
 
-  if (loadingClubs) {
-    return <div className="page" style={{ textAlign: 'center', padding: 60 }}>Carregando clubes e dados do mundo...</div>;
-  }
-
   const assignedDivisionByClubId = useMemo(() => {
     const map = new Map<string, number>();
     for (let d = 1; d <= divisionCount; d++) {
@@ -466,6 +462,10 @@ export function CustomChampionshipWizard() {
   const selectedUserClub = useMemo(() => {
     return allClubs.find((c) => c.id === userClubId) || null;
   }, [allClubs, userClubId]);
+
+  if (loadingClubs) {
+    return <div className="page" style={{ textAlign: 'center', padding: 60 }}>Carregando clubes e dados do mundo...</div>;
+  }
 
   const fieldStyle: React.CSSProperties = {
     width: '100%',

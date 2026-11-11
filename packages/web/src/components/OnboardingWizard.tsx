@@ -197,7 +197,7 @@ export function OnboardingWizard({ initialManagerProfile, onCompleted, onCancel,
         await completeCareerOnboarding({
           saveResult: saveRes,
           delegationPreset,
-          createClub: () => claimClub(clubId),
+          createClub: () => claimClub(clubId, gameMode),
         }),
       );
     } catch (err) {

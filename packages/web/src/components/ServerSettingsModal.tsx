@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { checkServerHealth, getApiBase, getCustomApiBase, setCustomApiBase } from '../api/client.js';
+import { checkServerHealth, getApiBase, setCustomApiBase, setOfflineMode } from '../api/client.js';
 import { SettingsIcon } from './icons/AppIcons.js';
 
 interface Props {
@@ -45,6 +45,7 @@ export function ServerSettingsModal({ isOpen, onClose, onConnected }: Props) {
     const ok = await checkServerHealth(serverUrl);
     setTesting(false);
     if (ok) {
+      setOfflineMode(false);
       setStatus('success');
       setStatusMsg('🟢 Servidor salvo e conectado com sucesso!');
       if (onConnected) onConnected();

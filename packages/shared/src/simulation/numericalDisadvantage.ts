@@ -102,7 +102,11 @@ const FATIGUE_OVERLOAD_PER_MISSING_FULL_MATCH = 0.15;
 
 /** Whether this event is a dismissal (a red card, distinguished from a yellow by carrying a suspension). */
 function isSendingOff(event: MatchEvent): boolean {
-  return event.type === 'card' && event.suspensionMatches !== undefined;
+  if (event.type !== 'card') return false;
+  if (event.suspensionMatches !== undefined) return true;
+  if ((event as any).cardType === 'red') return true;
+  const desc = typeof event.description === 'string' ? event.description.toLowerCase() : '';
+  return desc.includes('vermelho') || desc.includes('expulso');
 }
 
 /**

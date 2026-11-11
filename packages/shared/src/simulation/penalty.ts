@@ -1,4 +1,5 @@
 import { Player } from '../domain/player.js';
+import { defaultDetailedAttributes } from '../domain/detailedAttributes.js';
 
 /**
  * The penalty kick, resolved as a duel between two named players instead of two team-level numbers.
@@ -64,7 +65,7 @@ export function composure(player: Player): number {
 
 /** The taker's side of the duel, 0 to 1: specialism from the spot first, then technique, nerve and power. */
 export function penaltyTakerScore(player: Player): number {
-  const a = player.detailedAttributes;
+  const a = player.detailedAttributes ?? defaultDetailedAttributes(player.attributes?.finishing ?? 50);
   return (
     (a.PENALTY_TAKING * TAKER_WEIGHTS.penalty +
       a.SHOT_POWER * TAKER_WEIGHTS.shot +
@@ -76,7 +77,7 @@ export function penaltyTakerScore(player: Player): number {
 
 /** The keeper's side, 0 to 1: reading the taker first, then the raw ability to get across and reach it. */
 export function penaltyKeeperScore(player: Player): number {
-  const a = player.detailedAttributes;
+  const a = player.detailedAttributes ?? defaultDetailedAttributes(player.attributes?.goalkeeping ?? 50);
   return (
     (a.PENALTY_SAVING * KEEPER_WEIGHTS.penalty +
       a.REFLEXES * KEEPER_WEIGHTS.reflexes +
@@ -122,7 +123,7 @@ export function penaltyConversionProbability(taker: Player, keeper: Player | nul
  * how real missed penalties split between saved and off target (or against the woodwork).
  */
 export function penaltyOffTargetShare(taker: Player): number {
-  const control = (taker.detailedAttributes.PENALTY_TAKING + composure(taker)) / 200;
+  const control = ((taker.detailedAttributes?.PENALTY_TAKING ?? taker.attributes?.finishing ?? 50) + composure(taker)) / 200;
   return Math.max(0.2, Math.min(0.75, 0.95 - control));
 }
 
@@ -174,7 +175,7 @@ export function resolvePenaltyShot(
 
   // Miss chance (wide or against the post), amplified if stamina is low / fatigue is heavy
   const fatigueMultiplier = taker.fatigue > 70 ? 1.5 : 1.0;
-  const missChance = ((1.0 - (composure(taker) + taker.detailedAttributes.SHOT_POWER) / 200) * 0.15) * fatigueMultiplier;
+  const missChance = ((1.0 - (composure(taker) + (taker.detailedAttributes?.SHOT_POWER ?? taker.attributes?.finishing ?? 50)) / 200) * 0.15) * fatigueMultiplier;
 
   const gkZone = (Math.floor(rng() * 5) + 1) as PenaltyTargetZone;
 

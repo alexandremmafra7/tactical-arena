@@ -35,6 +35,7 @@ import {
   resolveLineupPlayers,
   tiredPlayers,
   validateSubstitutesAndPlan,
+  resolveClubKit,
 } from '@tactical-arena/shared';
 import { prisma } from '../db/prisma.js';
 import { joinOrCreateLeague } from './leagueService.js';
@@ -628,6 +629,14 @@ export function toDomain(record: ClubRecord, division = 1): Club {
   const cfo = staff.find((s) => s.role === 'FINANCIAL_DIRECTOR');
   const bankGuarantees = calculateBankGuaranteeEligibility(record.budget, visScore, cfo?.rating ?? 50);
 
+  const canonicalKit = resolveClubKit({
+    slug: record.slug,
+    name: record.name,
+    primaryColor: record.primaryColor,
+    secondaryColor: record.secondaryColor,
+    kitPattern: record.kitPattern as KitPattern,
+  });
+
   return {
     id: record.id,
     name: record.name,
@@ -668,9 +677,12 @@ export function toDomain(record: ClubRecord, division = 1): Club {
     staffRecords: record.staffRecordJson ? JSON.parse(record.staffRecordJson) : [],
     city: record.city ?? null,
     bankGuarantees,
-    kitPattern: (record.kitPattern as KitPattern) ?? undefined,
-    primaryColor: record.primaryColor ?? null,
-    secondaryColor: record.secondaryColor ?? null,
+    kitPattern: (record.kitPattern as KitPattern) || canonicalKit.kitPattern,
+    primaryColor: record.primaryColor || canonicalKit.primaryColor,
+    secondaryColor: record.secondaryColor || canonicalKit.secondaryColor,
+    awayKitPattern: canonicalKit.awayKitPattern,
+    awayPrimaryColor: canonicalKit.awayPrimaryColor,
+    awaySecondaryColor: canonicalKit.awaySecondaryColor,
     crestBase64: record.crestBase64 ?? null,
     staffDelegationConfig: staffDelegationConfig ?? DEFAULT_STAFF_DELEGATION_CONFIG,
   };

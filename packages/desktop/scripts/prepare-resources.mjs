@@ -136,6 +136,9 @@ await build({
   platform: 'node',
   format: 'cjs',
   target: 'node18',
+  banner: {
+    js: `const __vmPath = require('node:path').join(__dirname, 'vendor_modules'); const __Mod = require('node:module'); if (!__Mod.globalPaths.includes(__vmPath)) { __Mod.globalPaths.push(__vmPath); process.env.NODE_PATH = (process.env.NODE_PATH ? process.env.NODE_PATH + require('node:path').delimiter : '') + __vmPath; if (typeof __Mod._initPaths === 'function') __Mod._initPaths(); }`,
+  },
   // The Prisma client ships its own native query engine binary — it can't be bundled, only copied as-is.
   external: ['@prisma/client'],
   logLevel: 'info',

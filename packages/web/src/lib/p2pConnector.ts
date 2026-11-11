@@ -5,6 +5,7 @@ export class P2PConnector {
   private channel: RTCDataChannel | null = null;
   private onMessageCallback?: (payload: P2PMessagePayload) => void;
   private onStatusChangeCallback?: (status: string) => void;
+  private onOpenCallback?: () => void;
 
   constructor() {
     this.pc = new RTCPeerConnection({
@@ -18,6 +19,10 @@ export class P2PConnector {
 
   public setOnStatusChange(cb: (status: string) => void) {
     this.onStatusChangeCallback = cb;
+  }
+
+  public setOnOpen(cb: () => void) {
+    this.onOpenCallback = cb;
   }
 
   public async createRoom(): Promise<string> {
@@ -92,7 +97,10 @@ export class P2PConnector {
 
   private setupChannel() {
     if (!this.channel) return;
-    this.channel.onopen = () => this.updateStatus('Conectado com sucesso!');
+    this.channel.onopen = () => {
+      this.updateStatus('Conectado com sucesso!');
+      if (this.onOpenCallback) this.onOpenCallback();
+    };
     this.channel.onclose = () => this.updateStatus('Conexão encerrada.');
     this.channel.onmessage = (event) => {
       try {

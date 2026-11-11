@@ -1,0 +1,13 @@
+.git
+.github
+node_modules
+dist
+release
+dist-release
+.tmp*
+*.log
+.cloudflared
+packages/desktop/dist
+packages/desktop/release
+packages/web/dist
+packages/server/dist

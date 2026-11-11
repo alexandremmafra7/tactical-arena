@@ -37,15 +37,18 @@ import {
   type CreateCareerResult,
   type SaveSlot,
   generateSquad,
+  buildPlayerFromRating,
   generateAcademy,
   generateTacticalAssistantAdvice,
   generateOppositionDossier,
   planSmartTacticsAgainstOpponent,
   type OppositionDossier,
   autoFillLineup,
+  botTactic,
   buildSeasonCalendar,
   buildSponsorBoard,
   generateStaffMarket,
+  resolveClubKit,
   canHireStaff,
   generateSponsorshipOffers,
   generateNamingRightsChallengeOffer,
@@ -54,6 +57,7 @@ import {
   type StaffMember,
   type StaffDelegationConfig,
   type TrophyRoomEntry,
+  defaultDetailedAttributes,
   DEFAULT_STAFF_DELEGATION_CONFIG,
   type Sponsorship,
   createRng,
@@ -304,8 +308,14 @@ export interface LocalGameState {
   deadlineDayState?: DeadlineDayState;
   lockerRoomStates?: Record<string, LockerRoomState>;
   pressConferences?: LocalPressConference[];
+  /** Semente única gerada para este save para que sorteios de campeonatos e partidas sejam exclusivos. */
+  saveSeed?: string;
   /** Which build wrote this save. A mismatch means it is discarded rather than migrated; see BUILD_STAMP. */
   buildStamp?: string;
+}
+
+export function generateSaveSeed(): string {
+  return `save_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
 const DEFAULT_CLUBS_BY_COUNTRY: Record<string, Array<Array<{ name: string; slug: string; rating: number }>>> = {
@@ -461,6 +471,28 @@ function buildClub(seed: ClubSeed, country: string, index: number, division: num
   const squad = seed.players;
   const clubId = `club_${country}_${index + 1}`;
   const academy = generateAcademy(seed.slug || clubId, country, `academy-${seed.slug || clubId}`);
+
+  for (const p of squad) {
+    if (p.detailedAttributes && Object.getOwnPropertyDescriptor(p, 'detailedAttributes')?.enumerable !== false) {
+      Object.defineProperty(p, 'detailedAttributes', {
+        value: p.detailedAttributes,
+        enumerable: false,
+        writable: true,
+        configurable: true,
+      });
+    }
+  }
+  for (const a of academy) {
+    if (a.detailedAttributes && Object.getOwnPropertyDescriptor(a, 'detailedAttributes')?.enumerable !== false) {
+      Object.defineProperty(a, 'detailedAttributes', {
+        value: a.detailedAttributes,
+        enumerable: false,
+        writable: true,
+        configurable: true,
+      });
+    }
+  }
+
   const club: Club = {
     id: clubId,
     name: seed.name,
@@ -488,6 +520,12 @@ function buildClub(seed: ClubSeed, country: string, index: number, division: num
     pendingRoundTactic: null,
     staff: [],
     bankGuarantees: [],
+    kitPattern: resolveClubKit({ slug: seed.slug, name: seed.name }).kitPattern,
+    primaryColor: resolveClubKit({ slug: seed.slug, name: seed.name }).primaryColor,
+    secondaryColor: resolveClubKit({ slug: seed.slug, name: seed.name }).secondaryColor,
+    awayKitPattern: resolveClubKit({ slug: seed.slug, name: seed.name }).awayKitPattern,
+    awayPrimaryColor: resolveClubKit({ slug: seed.slug, name: seed.name }).awayPrimaryColor,
+    awaySecondaryColor: resolveClubKit({ slug: seed.slug, name: seed.name }).awaySecondaryColor,
   };
   club.sponsorships = localSponsorBoard(club, division);
   try {
@@ -525,7 +563,7 @@ function inventedCountryTier(country: string, division: number, count: number): 
   return seeds;
 }
 
-function initContinentalTournaments(clubs: Club[], season: number): ContinentalTournamentState[] {
+function initContinentalTournaments(clubs: Club[], season: number, saveSeed?: string): ContinentalTournamentState[] {
   const clubMapBySlug = new Map<string, Club>();
   const clubMapByName = new Map<string, Club>();
   for (const c of clubs) {
@@ -580,7 +618,7 @@ function initContinentalTournaments(clubs: Club[], season: number): ContinentalT
     reputationOrRating: averageSquadOverall(c.players ?? []),
   }));
 
-  const rng = createRng(`continental-season-${season}`);
+  const rng = createRng(`${saveSeed || 'continental'}-season-${season}`);
   const libGroups = generateContinentalGroups(libEntrants, rng);
   const sudGroups = generateContinentalGroups(sudEntrants, rng);
 
@@ -619,7 +657,8 @@ function initContinentalTournaments(clubs: Club[], season: number): ContinentalT
  * Takes the shipped club database when it has been read, and its own inventions when it has not. Club ids stay
  * `club_<PAIS>_<n>` either way, because saves and screens address clubs by that id.
  */
-function initDefaultWorld(content: OfflineContent | null = offlineContent): LocalGameState {
+function initDefaultWorld(content: OfflineContent | null = offlineContent, saveSeed?: string): LocalGameState {
+  const effectiveSaveSeed = saveSeed || generateSaveSeed();
   const clubs: Club[] = [];
   const leagues: League[] = [];
   const cups: Cup[] = [];
@@ -657,7 +696,7 @@ function initDefaultWorld(content: OfflineContent | null = offlineContent): Loca
         capacity: ids.length,
         clubIds: ids,
         status: 'IN_PROGRESS',
-        fixtures: generateDoubleRoundRobinFixtures(ids, `league_${country}_${division}_2026`),
+        fixtures: generateDoubleRoundRobinFixtures(ids, `${effectiveSaveSeed}_league_${country}_${division}_2026`),
         season: 2026,
         championClubId: null,
         championOwnerId: null,
@@ -688,11 +727,12 @@ function initDefaultWorld(content: OfflineContent | null = offlineContent): Loca
   return {
     version: 1,
     userId: LOCAL_USER_ID,
+    saveSeed: effectiveSaveSeed,
     gameDate: { year: 2026, month: 1, day: 15 },
     clubs,
     leagues,
     cups,
-    continentalCompetitions: initContinentalTournaments(clubs, 2026),
+    continentalCompetitions: initContinentalTournaments(clubs, 2026, effectiveSaveSeed),
     news: [],
     listings: [],
     proposals: [],
@@ -728,6 +768,68 @@ export function prepareOfflineWorld(): Promise<void> {
 
 let offlineWorldReady: Promise<void> | null = null;
 
+function expandTruncatedClubs(state: LocalGameState, content: OfflineContent): boolean {
+  let modified = false;
+  const rng = createRng('offline-squad-expansion');
+  for (const club of state.clubs) {
+    if (!club.players) club.players = [];
+    if (club.players.length >= 25) continue;
+
+    const existingNames = new Set(club.players.map((p) => p.name.toLowerCase().trim()));
+    const rawList = club.slug ? content.squads.get(club.slug) : undefined;
+    if (rawList && rawList.length > 0) {
+      const missing = rawList.filter((r) => !existingNames.has(r.name.toLowerCase().trim()));
+      for (let i = 0; i < missing.length && club.players.length < 32; i++) {
+        const raw = missing[i];
+        const p = buildPlayerFromRating(
+          {
+            id: `${club.slug || club.id}-p${club.players.length}`,
+            name: raw.name,
+            position: raw.position,
+            age: raw.age,
+            nationality: raw.nationality || club.country,
+            rating: raw.rating,
+            starLevel: raw.starLevel ?? 'NONE',
+            diferenciado: raw.diferenciado ?? false,
+          },
+          rng,
+        );
+        Object.defineProperty(p, 'detailedAttributes', {
+          value: p.detailedAttributes || defaultDetailedAttributes(p.overall),
+          enumerable: false,
+          writable: true,
+          configurable: true,
+        });
+        club.players.push(p);
+        existingNames.add(raw.name.toLowerCase().trim());
+        modified = true;
+      }
+    }
+
+    // Se ainda tiver menos de 26 jogadores, completa com jogadores da base/gerados para dar profundidade de elenco
+    if (club.players.length < 26) {
+      const avg = club.players.length > 0
+        ? Math.round(club.players.reduce((sum, p) => sum + p.overall, 0) / club.players.length)
+        : 68;
+      const filler = generateSquad(avg, `${club.slug || club.id}-fill`, club.country);
+      for (const p of filler) {
+        if (club.players.length >= 28) break;
+        if (existingNames.has(p.name.toLowerCase().trim())) continue;
+        Object.defineProperty(p, 'detailedAttributes', {
+          value: p.detailedAttributes || defaultDetailedAttributes(p.overall),
+          enumerable: false,
+          writable: true,
+          configurable: true,
+        });
+        club.players.push(p);
+        existingNames.add(p.name.toLowerCase().trim());
+        modified = true;
+      }
+    }
+  }
+  return modified;
+}
+
 async function buildOfflineWorld(): Promise<void> {
   const content = await loadOfflineContent();
   if (!content) return;
@@ -739,11 +841,21 @@ async function buildOfflineWorld(): Promise<void> {
     if (raw) {
       const parsed = JSON.parse(raw) as LocalGameState;
       const isTestEnv = typeof process !== 'undefined' && process.env?.NODE_ENV === 'test';
-      const isCompatibleStamp = parsed.buildStamp === BUILD_STAMP || (!isTestEnv && Boolean(parsed.buildStamp && (parsed.buildStamp === 'v0.1.0' || parsed.buildStamp.startsWith('2026-'))));
+      const hasCorruptedSerieA = parsed.clubs?.some((c) => c.slug === 'exemplo-aguia' || (c.country === 'BRA' && c.name === 'Porto') || (c.country === 'BRA' && (c.players?.length ?? 0) < 22));
+      const isCompatibleStamp = (parsed.buildStamp === BUILD_STAMP || (!isTestEnv && Boolean(parsed.buildStamp && (parsed.buildStamp === 'v0.1.3' || parsed.buildStamp.startsWith('2026-'))))) && !hasCorruptedSerieA;
       if (isCompatibleStamp) {
         const hasActiveCareer = parsed.clubs?.some((c) => c.ownerId === LOCAL_USER_ID);
         const hasAccessDivision = parsed.leagues?.some((l) => l.countryCode === 'BRA' && l.division === 2);
-        if (hasActiveCareer && hasAccessDivision) return;
+        const hasTruncatedRoster = parsed.clubs?.some((c) => c.country === 'BRA' && (c.players?.length ?? 0) < 22);
+
+        if (hasActiveCareer && hasAccessDivision && !hasTruncatedRoster) return;
+
+        if (hasActiveCareer && hasTruncatedRoster) {
+          expandTruncatedClubs(parsed, content);
+          inMemoryGameState = parsed;
+          saveLocalGameState(inMemoryGameState);
+          return;
+        }
       }
     }
   } catch {
@@ -765,7 +877,19 @@ export function resetInMemoryGameState(): void {
 
 export function loadLocalGameState(): LocalGameState {
   if (inMemoryGameState) {
-    return inMemoryGameState;
+    if (inMemoryGameState.clubs && inMemoryGameState.clubs.some((c) => c.slug === 'exemplo-aguia' || (c.country === 'BRA' && c.name === 'Porto'))) {
+      inMemoryGameState = null;
+    } else {
+      if (!inMemoryGameState.saveSeed) {
+        inMemoryGameState.saveSeed = generateSaveSeed();
+      }
+      if (offlineContent && inMemoryGameState.clubs && inMemoryGameState.clubs.some((c) => c.country === 'BRA' && (c.players?.length ?? 0) < 22)) {
+        if (expandTruncatedClubs(inMemoryGameState, offlineContent)) {
+          saveLocalGameState(inMemoryGameState);
+        }
+      }
+      return inMemoryGameState;
+    }
   }
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -773,8 +897,9 @@ export function loadLocalGameState(): LocalGameState {
 
     // A career from another build is not migrated, it is dropped. See BUILD_STAMP for why, and until when.
     const isTestEnv = typeof process !== 'undefined' && process.env?.NODE_ENV === 'test';
-    const isCompatibleStamp = !isTestEnv && Boolean(stamped?.buildStamp && (stamped.buildStamp === 'v0.1.0' || stamped.buildStamp.startsWith('2026-')));
-    const fromThisBuild = stamped?.buildStamp === BUILD_STAMP || isCompatibleStamp;
+    const hasCorruptedSerieA = stamped?.clubs?.some((c) => c.slug === 'exemplo-aguia' || (c.country === 'BRA' && c.name === 'Porto') || (c.country === 'BRA' && (c.players?.length ?? 0) < 22));
+    const isCompatibleStamp = !isTestEnv && !hasCorruptedSerieA && Boolean(stamped?.buildStamp && (stamped.buildStamp === 'v0.1.3' || stamped.buildStamp.startsWith('2026-')));
+    const fromThisBuild = (stamped?.buildStamp === BUILD_STAMP || isCompatibleStamp) && !hasCorruptedSerieA;
     if (stamped && !fromThisBuild) {
       console.info('[offline] save de outra versão do jogo, começando do zero');
     }
@@ -783,6 +908,17 @@ export function loadLocalGameState(): LocalGameState {
       const parsed = stamped as LocalGameState;
       if (parsed && parsed.clubs && Array.isArray(parsed.clubs) && parsed.clubs.length > 0) {
         let updated = false;
+        if (!parsed.saveSeed) {
+          parsed.saveSeed = generateSaveSeed();
+          updated = true;
+        }
+
+        // Se o conteúdo offline já estiver disponível e houver elencos truncados da versão anterior (< 22 jogadores), expande
+        if (offlineContent && parsed.clubs.some((c) => c.country === 'BRA' && (c.players?.length ?? 0) < 22)) {
+          if (expandTruncatedClubs(parsed, offlineContent)) {
+            updated = true;
+          }
+        }
         if (!parsed.tenures) {
           const startedAt = new Date(Date.UTC(
             parsed.gameDate.year,
@@ -812,9 +948,29 @@ export function loadLocalGameState(): LocalGameState {
         // Ensure every club has defensive array properties initialized
         for (const club of parsed.clubs) {
           if (!club.players) club.players = [];
+          for (const p of club.players) {
+            if (!p.detailedAttributes || Object.getOwnPropertyDescriptor(p, 'detailedAttributes')?.enumerable !== false) {
+              Object.defineProperty(p, 'detailedAttributes', {
+                value: p.detailedAttributes || defaultDetailedAttributes(p.overall),
+                enumerable: false,
+                writable: true,
+                configurable: true,
+              });
+            }
+          }
           if (!club.academyPlayers || club.academyPlayers.length === 0) {
             club.academyPlayers = generateAcademy(club.slug || club.id, club.country);
             updated = true;
+          }
+          for (const a of club.academyPlayers) {
+            if (!a.detailedAttributes || Object.getOwnPropertyDescriptor(a, 'detailedAttributes')?.enumerable !== false) {
+              Object.defineProperty(a, 'detailedAttributes', {
+                value: a.detailedAttributes || defaultDetailedAttributes(a.overall),
+                enumerable: false,
+                writable: true,
+                configurable: true,
+              });
+            }
           }
           if (!club.sponsorships) club.sponsorships = [];
           /**
@@ -851,7 +1007,7 @@ export function loadLocalGameState(): LocalGameState {
               capacity: countryClubs.length,
               clubIds: cIds,
               status: 'IN_PROGRESS',
-              fixtures: generateDoubleRoundRobinFixtures(cIds),
+              fixtures: generateDoubleRoundRobinFixtures(cIds, `${parsed.saveSeed || 'save'}_league_${country}_1_${parsed.currentSeason || 2026}`),
               season: parsed.currentSeason || 2026,
               championClubId: null,
               championOwnerId: null,
@@ -916,6 +1072,34 @@ export function loadLocalGameState(): LocalGameState {
 
 export function saveLocalGameState(state: LocalGameState): void {
   inMemoryGameState = state;
+  if (state.clubs) {
+    for (const club of state.clubs) {
+      if (club.players) {
+        for (const p of club.players) {
+          if (p.detailedAttributes && Object.getOwnPropertyDescriptor(p, 'detailedAttributes')?.enumerable !== false) {
+            Object.defineProperty(p, 'detailedAttributes', {
+              value: p.detailedAttributes,
+              enumerable: false,
+              writable: true,
+              configurable: true,
+            });
+          }
+        }
+      }
+      if (club.academyPlayers) {
+        for (const a of club.academyPlayers) {
+          if (a.detailedAttributes && Object.getOwnPropertyDescriptor(a, 'detailedAttributes')?.enumerable !== false) {
+            Object.defineProperty(a, 'detailedAttributes', {
+              value: a.detailedAttributes,
+              enumerable: false,
+              writable: true,
+              configurable: true,
+            });
+          }
+        }
+      }
+    }
+  }
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     try {
@@ -1238,7 +1422,7 @@ function trazerPais(state: LocalGameState, country: string): void {
     capacity: ids.length,
     clubIds: ids,
     status: 'IN_PROGRESS',
-    fixtures: generateDoubleRoundRobinFixtures(ids, `league_${country}_1_${state.currentSeason}`),
+    fixtures: generateDoubleRoundRobinFixtures(ids, `${state.saveSeed || 'save'}_league_${country}_1_${state.currentSeason}`),
     season: state.currentSeason,
     championClubId: null,
     championOwnerId: null,
@@ -1266,11 +1450,27 @@ function trazerPais(state: LocalGameState, country: string): void {
   saveLocalGameState(state);
 }
 
-export async function localListAvailableClubs(country?: string): Promise<Club[]> {
+export async function localListAvailableClubs(country?: string, division?: number): Promise<Club[]> {
+  await prepareOfflineWorld();
   const state = loadLocalGameState();
+  if (offlineContent && state.clubs && state.clubs.some((c) => c.country === 'BRA' && (c.players?.length ?? 0) < 22)) {
+    if (expandTruncatedClubs(state, offlineContent)) {
+      saveLocalGameState(state);
+    }
+  }
   // Montado na hora, do arquivo que já veio no APK, em vez de responder com uma lista vazia.
   if (country) trazerPais(state, country);
-  return state.clubs.filter((c) => !country || c.country === country);
+  let result = state.clubs.filter((c) => !country || c.country === country);
+  if (division !== undefined) {
+    const targetLeague = state.leagues.find(
+      (l) => (!country || l.countryCode === country) && l.division === division,
+    );
+    if (targetLeague) {
+      const allowedIds = new Set(targetLeague.clubIds);
+      result = result.filter((c) => allowedIds.has(c.id));
+    }
+  }
+  return result;
 }
 
 export async function localClaimClub(clubId: string): Promise<Club> {
@@ -1318,7 +1518,7 @@ export async function localClaimClub(clubId: string): Promise<Club> {
       capacity: countryClubs.length,
       clubIds: cIds,
       status: 'IN_PROGRESS',
-      fixtures: generateDoubleRoundRobinFixtures(cIds),
+      fixtures: generateDoubleRoundRobinFixtures(cIds, `${state.saveSeed || 'save'}_league_${target.country}_1_${state.currentSeason}`),
       season: state.currentSeason,
       championClubId: null,
       championOwnerId: null,
@@ -1383,6 +1583,12 @@ export async function localCreateClub(name: string, country: string): Promise<Cl
     pendingRoundTactic: null,
     staff: [],
     bankGuarantees: [],
+    kitPattern: resolveClubKit({ name }).kitPattern,
+    primaryColor: resolveClubKit({ name }).primaryColor,
+    secondaryColor: resolveClubKit({ name }).secondaryColor,
+    awayKitPattern: resolveClubKit({ name }).awayKitPattern,
+    awayPrimaryColor: resolveClubKit({ name }).awayPrimaryColor,
+    awaySecondaryColor: resolveClubKit({ name }).awaySecondaryColor,
   };
   state.clubs.push(newClub);
   openLocalTenure(state, newClub);
@@ -1501,6 +1707,12 @@ export async function localCreateCustomChampionship(
         pendingRoundTactic: null,
         staff: [],
         bankGuarantees: [],
+        kitPattern: resolveClubKit({ slug: cid }).kitPattern,
+        primaryColor: resolveClubKit({ slug: cid }).primaryColor,
+        secondaryColor: resolveClubKit({ slug: cid }).secondaryColor,
+        awayKitPattern: resolveClubKit({ slug: cid }).awayKitPattern,
+        awayPrimaryColor: resolveClubKit({ slug: cid }).awayPrimaryColor,
+        awaySecondaryColor: resolveClubKit({ slug: cid }).awaySecondaryColor,
         ownerId: cid === userClubId ? LOCAL_USER_ID : 'bot',
       });
     }
@@ -1695,6 +1907,26 @@ function leagueOfClub(state: LocalGameState, club: Club): League | undefined {
  * completed, and the clock stopped on round one for the rest of the career.
  */
 function defaultTacticFor(club: Club): Tactic {
+  if (club.players && club.players.length >= 11) {
+    try {
+      if (club.ownerId && club.ownerId !== LOCAL_USER_ID) {
+        return botTactic(club);
+      }
+      return autoFillLineup(club);
+    } catch {
+      // fallback se a escala automática falhar
+    }
+  }
+
+  // Fallback seguro: garante que um goleiro (se existir) esteja estritamente no slot 0
+  const gks = club.players?.filter((p) => p.position === 'GK') ?? [];
+  const outfield = club.players?.filter((p) => p.position !== 'GK') ?? [];
+  const starters = gks.length > 0
+    ? [gks[0], ...outfield.slice(0, 10)]
+    : (club.players ?? []).slice(0, 11);
+  const starterIds = new Set(starters.map((p) => p.id));
+  const remaining = (club.players ?? []).filter((p) => !starterIds.has(p.id));
+
   return {
     clubId: club.id,
     formation: '4-4-2',
@@ -1703,8 +1935,8 @@ function defaultTacticFor(club: Club): Tactic {
     markingStyle: 'BALANCED',
     attackApproach: 'BALANCED',
     pressing: 'MEDIUM',
-    lineup: club.players.slice(0, 11).map((p) => ({ playerId: p.id })),
-    substitutes: club.players.slice(11, 18).map((p) => ({ playerId: p.id })),
+    lineup: starters.map((p) => ({ playerId: p.id })),
+    substitutes: remaining.slice(0, 7).map((p) => ({ playerId: p.id })),
     plannedSubstitutions: [],
   };
 }
@@ -1824,6 +2056,9 @@ export async function localFoundClub(input: {
     bankGuarantees: [],
   };
   novo.captainPlayerId = novo.players[0]?.id ?? null;
+  try {
+    novo.pendingRoundTactic = autoFillLineup(novo);
+  } catch {}
   novo.sponsorships = localSponsorBoard(novo, acesso.division);
 
   // Uma troca só, na lista da divisão e em cada jogo já sorteado contra quem sai.
@@ -2007,7 +2242,7 @@ export async function localGetMatch(id: string): Promise<Match> {
          * para o placar. O estado nasce aqui, no minuto zero, e daí em diante é a tela que o empurra.
          */
         if (home && away) {
-          const semente = `${fix.homeClubId}_${fix.awayClubId}_${fix.round}`;
+          const semente = `${state.saveSeed || 'save'}_${fix.homeClubId}_${fix.awayClubId}_${fix.round}`;
           if (!state.liveMatch || state.liveMatch.matchId !== id) {
             state.liveMatch = { matchId: id, live: liveStateInicial(home, away, semente) };
             saveLocalGameState(state);
@@ -2043,7 +2278,7 @@ export async function localGetMatch(id: string): Promise<Match> {
         const sim = simulateMatch({
           home: { club: home, tactic: defaultTactic(home.id) },
           away: { club: away, tactic: defaultTactic(away.id) },
-          seed: `${fix.homeClubId}_${fix.awayClubId}_${fix.round}`,
+          seed: `${state.saveSeed || 'save'}_${fix.homeClubId}_${fix.awayClubId}_${fix.round}`,
           weather: localWeatherOf(state, home, fix.awayClubId),
         });
         result = {
@@ -2136,7 +2371,7 @@ export async function localGetNextMatch(clubId: string): Promise<Match | null> {
     id: `match_${fix.homeClubId}_${fix.awayClubId}_${fix.round}`,
     homeClubId: home.id,
     awayClubId: away.id,
-    seed: `${fix.homeClubId}_${fix.awayClubId}_${fix.round}`,
+    seed: `${state.saveSeed || 'save'}_${fix.homeClubId}_${fix.awayClubId}_${fix.round}`,
     status: 'WAITING_TACTICS' as MatchStatus,
     competitionType: 'league',
     competitionId: league.id,
@@ -2305,7 +2540,7 @@ export async function localAdvanceLiveMatch(matchId: string, toMinute: number, i
       id: matchId,
       homeClubId: home.id,
       awayClubId: away.id,
-      seed: `${fix.homeClubId}_${fix.awayClubId}_${fix.round}`,
+      seed: `${state.saveSeed || 'save'}_${fix.homeClubId}_${fix.awayClubId}_${fix.round}`,
       status: 'SIMULATED' as MatchStatus,
       result: fix.result,
       competitionType: 'league',
@@ -2313,7 +2548,7 @@ export async function localAdvanceLiveMatch(matchId: string, toMinute: number, i
     } as Match;
   }
 
-  const seed = `${fix.homeClubId}_${fix.awayClubId}_${fix.round}`;
+  const seed = `${state.saveSeed || 'save'}_${fix.homeClubId}_${fix.awayClubId}_${fix.round}`;
 
   // O estado vivo acompanha o save, senão fechar a tela no minuto 30 recomeçaria a partida do zero.
   if (!state.liveMatch || state.liveMatch.matchId !== matchId) {
@@ -2341,16 +2576,16 @@ export async function localAdvanceLiveMatch(matchId: string, toMinute: number, i
   }
 
   const acrescimos = calculateStoppageTime(live.events);
+  const tetoPrimeiro = 45 + acrescimos.half1;
 
-  if (live.period === 'HT' && Math.round(toMinute) > 45) live.period = '2T';
+  if (live.period === 'HT' && Math.round(toMinute) > tetoPrimeiro) live.period = '2T';
 
   const primeiroTempo = (live.period ?? '1T') === '1T';
-  const tetoPrimeiro = 45 + acrescimos.half1;
   const tetoSegundo = MATCH_MINUTES + acrescimos.half2;
   const teto = primeiroTempo ? tetoPrimeiro : tetoSegundo;
 
   const alvo = Math.max(live.currentMinute, Math.min(teto, Math.round(toMinute)));
-  const inicio = primeiroTempo ? live.currentMinute + 1 : Math.max(46, live.currentMinute + 1);
+  const inicio = primeiroTempo ? live.currentMinute + 1 : Math.max(tetoPrimeiro + 1, live.currentMinute + 1);
 
   if (alvo > live.currentMinute) {
     // Avalia ajustes adaptativos táticos do adversário (IA de decisão em tempo real)
@@ -2669,13 +2904,19 @@ export async function localResolveRedCardDecision(matchId: string, lineupPlayerI
 
   const isHome = decision.side === 'home';
   const tactic = isHome ? live.homeTactic : live.awayTactic;
-  if (lineupPlayerIds && lineupPlayerIds.length === tactic.lineup.length) {
-    const reorganized: Tactic = {
-      ...tactic,
-      lineup: tactic.lineup.map((slot, i) => ({ ...slot, playerId: lineupPlayerIds[i] })),
-    };
-    if (isHome) live.homeTactic = reorganized;
-    else live.awayTactic = reorganized;
+  if (lineupPlayerIds && lineupPlayerIds.length > 0) {
+    let fullList = lineupPlayerIds;
+    if (lineupPlayerIds.length === tactic.lineup.length - 1) {
+      fullList = [...lineupPlayerIds, decision.playerId];
+    }
+    if (fullList.length === tactic.lineup.length) {
+      const reorganized: Tactic = {
+        ...tactic,
+        lineup: tactic.lineup.map((slot, i) => ({ ...slot, playerId: fullList[i] })),
+      };
+      if (isHome) live.homeTactic = reorganized;
+      else live.awayTactic = reorganized;
+    }
   }
 
   live.pendingDecision = null;
@@ -2704,7 +2945,7 @@ export async function localUpdateLiveMatchTactic(matchId: string, tactic: Tactic
   const away = state.clubs.find((c) => c.id === fix.awayClubId);
   if (!home || !away) throw new Error('Clube da partida não encontrado');
 
-  const seed = `${fix.homeClubId}_${fix.awayClubId}_${fix.round}`;
+  const seed = `${state.saveSeed || 'save'}_${fix.homeClubId}_${fix.awayClubId}_${fix.round}`;
   if (!state.liveMatch || state.liveMatch.matchId !== matchId) {
     state.liveMatch = { matchId, live: liveStateInicial(home, away, seed) };
   }
@@ -3019,7 +3260,7 @@ export async function localGetMatchSiblings(matchId: string): Promise<{
       const sibId = `match_${f.homeClubId}_${f.awayClubId}_${f.round}`;
       const home = state.clubs.find((c) => c.id === f.homeClubId);
       const away = state.clubs.find((c) => c.id === f.awayClubId);
-      const seed = `${f.homeClubId}_${f.awayClubId}_${f.round}`;
+      const seed = `${state.saveSeed || 'save'}_${f.homeClubId}_${f.awayClubId}_${f.round}`;
 
       let liveState = state.siblingLiveMatches?.[sibId];
       if (!liveState && home && away) {
@@ -3063,7 +3304,7 @@ export async function localTickLiveMatch(matchId: string, toMinute: number): Pro
   if (!home || !away) throw new Error('Clubes não encontrados');
 
   if (!state.siblingLiveMatches) state.siblingLiveMatches = {};
-  const seed = `${fix.homeClubId}_${fix.awayClubId}_${fix.round}`;
+  const seed = `${state.saveSeed || 'save'}_${fix.homeClubId}_${fix.awayClubId}_${fix.round}`;
   if (!state.siblingLiveMatches[matchId]) {
     state.siblingLiveMatches[matchId] = liveStateInicial(home, away, seed);
   }
@@ -3543,18 +3784,18 @@ function resolveContinentalFixturesOn(
             const result = simulateBackgroundResult(
               localSideRating(home),
               localSideRating(away),
-              `${comp.id}-${currentRound}-${fixture.homeClubId}`,
+              `${state.saveSeed || 'save'}-${comp.id}-${currentRound}-${fixture.homeClubId}`,
             );
 
             const homeEvents = generateBackgroundScorersAndAssists(
               home,
               result.homeGoals,
-              `${comp.id}-${currentRound}-${fixture.homeClubId}-h`,
+              `${state.saveSeed || 'save'}-${comp.id}-${currentRound}-${fixture.homeClubId}-h`,
             );
             const awayEvents = generateBackgroundScorersAndAssists(
               away,
               result.awayGoals,
-              `${comp.id}-${currentRound}-${fixture.awayClubId}-a`,
+              `${state.saveSeed || 'save'}-${comp.id}-${currentRound}-${fixture.awayClubId}-a`,
             );
 
             home.players = applyBackgroundResultToPlayers(
@@ -3634,18 +3875,18 @@ function resolveContinentalFixturesOn(
           const result = simulateBackgroundResult(
             localSideRating(home),
             localSideRating(away),
-            `${comp.id}-${currentRound}-${fixture.homeClubId}`,
+            `${state.saveSeed || 'save'}-${comp.id}-${currentRound}-${fixture.homeClubId}`,
           );
 
           const homeEvents = generateBackgroundScorersAndAssists(
             home,
             result.homeGoals,
-            `${comp.id}-${currentRound}-${fixture.homeClubId}-ko-h`,
+            `${state.saveSeed || 'save'}-${comp.id}-${currentRound}-${fixture.homeClubId}-ko-h`,
           );
           const awayEvents = generateBackgroundScorersAndAssists(
             away,
             result.awayGoals,
-            `${comp.id}-${currentRound}-${fixture.awayClubId}-ko-a`,
+            `${state.saveSeed || 'save'}-${comp.id}-${currentRound}-${fixture.awayClubId}-ko-a`,
           );
 
           home.players = applyBackgroundResultToPlayers(
@@ -3833,18 +4074,18 @@ function resolveFixturesOn(
         const result = simulateBackgroundResult(
           localSideRating(home),
           localSideRating(away),
-          `${league.id}-${fixture.round}-${fixture.homeClubId}`,
+          `${state.saveSeed || 'save'}-${league.id}-${fixture.round}-${fixture.homeClubId}`,
         );
 
         const homeEvents = generateBackgroundScorersAndAssists(
           home,
           result.homeGoals,
-          `${league.id}-${fixture.round}-${fixture.homeClubId}-h`,
+          `${state.saveSeed || 'save'}-${league.id}-${fixture.round}-${fixture.homeClubId}-h`,
         );
         const awayEvents = generateBackgroundScorersAndAssists(
           away,
           result.awayGoals,
-          `${league.id}-${fixture.round}-${fixture.awayClubId}-a`,
+          `${state.saveSeed || 'save'}-${league.id}-${fixture.round}-${fixture.awayClubId}-a`,
         );
 
         home.players = applyBackgroundResultToPlayers(
@@ -4977,8 +5218,10 @@ export async function localListSaves(): Promise<{
 }
 
 export async function localCreateNewSave(params: any): Promise<{ ok: boolean; save: LocalSaveSlot; token: string; userId: string }> {
+  await prepareOfflineWorld();
   resetInMemoryGameState();
-  const fresh = initDefaultWorld(offlineContent);
+  const seedForSave = params?.saveSeed || generateSaveSeed();
+  const fresh = initDefaultWorld(offlineContent, seedForSave);
   // O modo e estilo escolhidos na criação entram no mundo novo
   fresh.gameMode = (params?.gameMode as GameMode | undefined) ?? 'STANDARD';
   fresh.managerStyle = (params?.managerStyle as ManagerStyleId | undefined) ?? 'Estrategista';

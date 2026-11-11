@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   bookedPlayerIds,
@@ -30,6 +30,7 @@ import {
   computeLiveMomentumResource,
   getMomentumSkillStatuses,
   computeAssistantSubSuggestions,
+  sentOffPlayerIds,
   buildHalftimeAssistantBriefing,
   buildQuickPostMatchPressQuestions,
   type MomentumSkillId,
@@ -46,6 +47,7 @@ import {
   getMatchSiblings,
   listMyClubs,
   listSaves,
+  peekLiveMatch,
   resolveInjuryDecision,
   resolveRedCardDecision,
   tickLiveMatch,
@@ -335,6 +337,7 @@ export function LiveMatchPage() {
   }, [matchId]);
 
   function handleStartMatch() {
+    playAnchorRef.current = { realTime: Date.now(), gameMinute: requestedMinuteRef.current };
     setPauseReason(null);
     resetScrollToTop('smooth');
   }
@@ -399,6 +402,9 @@ export function LiveMatchPage() {
           setTacticalModalOpen(true);
         } else if (data.live?.period === '2T' || startMinute > 45) {
           setHalftimeSeen(true);
+          setPauseReason(data.live?.pendingDecision ? 'stoppage' : null);
+        } else if (startMinute === 0) {
+          setHalftimeSeen(false);
           setPauseReason(data.live?.pendingDecision ? 'stoppage' : null);
         } else {
           setHalftimeSeen(false);
@@ -511,10 +517,12 @@ export function LiveMatchPage() {
     setGoalQueue((prev) => {
       const next = prev.slice(1);
       if (next.length === 0) {
-        if (!halftimeSeen && (match?.live?.currentMinute ?? clockMinute) >= 45) {
+        const stoppage = calculateStoppageTime(liveEventsRef.current);
+        const half1Limit = 45 + stoppage.half1;
+        if (!halftimeSeen && (match?.live?.currentMinute ?? clockMinute) >= half1Limit) {
           playAnchorRef.current = null;
-          requestedMinuteRef.current = 45;
-          setDisplayMinute(45);
+          requestedMinuteRef.current = half1Limit;
+          setDisplayMinute(half1Limit);
           setPauseReason('halftime');
           setTacticalModalMode('halftime');
           setTacticalModalOpen(true);
@@ -738,11 +746,11 @@ export function LiveMatchPage() {
             setPauseReason('manual');
           }
 
-          if (!halftimeSeen && (updated.live?.period === 'HT' || target >= halfCeiling)) {
+          if (!halftimeSeen && (updated.live?.period === 'HT' || serverTargetInt >= halfCeiling)) {
             soundFx.playWhistle('halftime');
             playAnchorRef.current = null;
-            setDisplayMinute(45 + stoppage.half1);
-            requestedMinuteRef.current = 45;
+            setDisplayMinute(halfCeiling);
+            requestedMinuteRef.current = halfCeiling;
             setPauseReason('halftime');
             setTacticalModalMode('halftime');
             setTacticalModalOpen(true);
@@ -763,8 +771,8 @@ export function LiveMatchPage() {
       if (!halftimeSeen && (target >= halfCeiling || match.live?.period === 'HT')) {
         soundFx.playWhistle('halftime');
         playAnchorRef.current = null;
-        setDisplayMinute(45 + stoppage.half1);
-        requestedMinuteRef.current = 45;
+        setDisplayMinute(halfCeiling);
+        requestedMinuteRef.current = halfCeiling;
         setPauseReason('halftime');
         setTacticalModalMode('halftime');
         setTacticalModalOpen(true);
@@ -791,6 +799,35 @@ export function LiveMatchPage() {
     return () => clearInterval(interval);
   }, [pauseReason, match?.status, speedKey, halftimeSeen, isFullTime, mySide]);
 
+  // Lances que o motor já decidiu para os próximos minutos (espiada, sem gravar nada). Só o campo 2D usa isto,
+  // para a bola já estar perto do gol quando o relógio revelar o lance. Placar, som, pausa e eventos na tela
+  // continuam esperando o relógio, como sempre. Qualquer mudança no estado do motor (minuto, sorteio, tática,
+  // substituição) invalida a previsão e pede outra.
+  const [lookahead, setLookahead] = useState<MatchEvent[]>([]);
+  const minuteMs = (SPEED_OPTIONS.find((o) => o.key === speedKey) ?? SPEED_OPTIONS[0]).durationMs / TOTAL_MINUTES;
+  const peekSignature = useMemo(() => {
+    const l = match?.live;
+    if (!l || match?.status !== 'LIVE' || l.pendingDecision) return '';
+    return [l.currentMinute, l.period ?? '', l.rngState, JSON.stringify([l.homeTactic, l.awayTactic])].join('|');
+  }, [match?.live, match?.status]);
+  const peekFromMinute = match?.live?.currentMinute ?? 0;
+  useEffect(() => {
+    if (!peekSignature || !matchId) {
+      setLookahead([]);
+      return;
+    }
+    // Olha ~5 s reais à frente (um pouco mais que a janela de preparação do campo), qualquer que seja a velocidade.
+    const minutes = Math.min(30, Math.max(2, Math.ceil(5000 / minuteMs)));
+    let cancelled = false;
+    void peekLiveMatch(matchId, peekFromMinute + minutes).then((events) => {
+      if (!cancelled) setLookahead(events);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [peekSignature, matchId, minuteMs]);
+
+
   // Keyboard shortcuts
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -810,6 +847,10 @@ export function LiveMatchPage() {
         }
         if (pauseReason === 'manual' && clockMinute === 0) {
           handleStartMatch();
+          return;
+        }
+        if (pauseReason === 'halftime') {
+          openTacticalCenter('halftime');
           return;
         }
         setPauseReason((prev) => (prev === 'stoppage' ? prev : prev === null ? 'manual' : null));
@@ -941,9 +982,11 @@ export function LiveMatchPage() {
 
       if (pauseReason === 'halftime' || tacticalModalMode === 'halftime' || (!halftimeSeen && (match.live?.currentMinute ?? clockMinute) >= 45)) {
         setHalftimeSeen(true);
-        setDisplayMinute(45);
-        requestedMinuteRef.current = 45;
-        playAnchorRef.current = { realTime: Date.now(), gameMinute: 45 };
+        const stoppage = calculateStoppageTime(liveEventsRef.current);
+        const resumeMinute = 45 + stoppage.half1;
+        setDisplayMinute(resumeMinute);
+        requestedMinuteRef.current = resumeMinute;
+        playAnchorRef.current = { realTime: Date.now(), gameMinute: resumeMinute };
       }
 
       setDecisionOptions(null);
@@ -1225,15 +1268,8 @@ export function LiveMatchPage() {
   const myTactic: Tactic = effectiveTactic;
 
   const vacatedIds = (() => {
-    const ids = new Set<string>();
-    if (!live?.events || !effectiveSide) return ids;
-    for (const ev of live.events) {
-      const isRed = ev.suspensionMatches !== undefined || ev.description.toLowerCase().includes('vermelho');
-      if (ev.team === effectiveSide && ev.type === 'card' && isRed && ev.playerId) {
-        ids.add(ev.playerId);
-      }
-    }
-    if (live.pendingDecision?.type === 'redCard' && live.pendingDecision.playerId) {
+    const ids = sentOffPlayerIds(live?.events ?? [], effectiveSide);
+    if (live?.pendingDecision?.type === 'redCard' && live.pendingDecision.playerId) {
       ids.add(live.pendingDecision.playerId);
     }
     return ids;
@@ -2248,6 +2284,10 @@ export function LiveMatchPage() {
                 momentum={momentumResource.homeMomentum}
                 isPaused={pauseReason !== null}
                 speedKey={speedKey}
+                period={halftimeSeen || live.period === '2T' ? '2T' : '1T'}
+                gameTime={displayMinute}
+                upcomingEvents={lookahead}
+                minuteMs={minuteMs}
                 homeGoals={live.homeGoals}
                 awayGoals={live.awayGoals}
                 selectedEvent={selectedReplayEvent}
@@ -2808,9 +2848,11 @@ export function LiveMatchPage() {
         }}
         onResumeHalftime={() => {
           setHalftimeSeen(true);
-          setDisplayMinute(45);
-          requestedMinuteRef.current = 45;
-          playAnchorRef.current = { realTime: Date.now(), gameMinute: 45 };
+          const stoppage = calculateStoppageTime(liveEventsRef.current);
+          const resumeMinute = 45 + stoppage.half1;
+          setDisplayMinute(resumeMinute);
+          requestedMinuteRef.current = resumeMinute;
+          playAnchorRef.current = { realTime: Date.now(), gameMinute: resumeMinute };
           setTacticalModalOpen(false);
           setPauseReason(null);
         }}

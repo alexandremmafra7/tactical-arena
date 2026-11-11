@@ -1,29 +1,11 @@
 import type { Club } from './club.js';
+import { resolveClubKit } from './clubKits.js';
 
 export interface ClubTingimentoColors {
   primaryColor: string;
   secondaryColor: string;
   darkColor: string;
 }
-
-const CLUB_COLOR_OVERRIDES: Record<string, { primaryColor: string; secondaryColor: string }> = {
-  flamengo: {
-    primaryColor: '#e11d48',
-    secondaryColor: '#000000',
-  },
-  palmeiras: {
-    primaryColor: '#047857',
-    secondaryColor: '#ffffff',
-  },
-  sao_paulo: {
-    primaryColor: '#dc2626',
-    secondaryColor: '#ffffff',
-  },
-  corinthians: {
-    primaryColor: '#18181b',
-    secondaryColor: '#ffffff',
-  },
-};
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   let cleanHex = hex.replace('#', '');
@@ -65,22 +47,9 @@ export function getClubTingimentoColors(club?: Partial<Club> | null): ClubTingim
     };
   }
 
-  let primary = club.primaryColor;
-  let secondary = club.secondaryColor;
-
-  const slugKey = club.slug?.toLowerCase();
-  const nameKey = club.name?.toLowerCase().replace(/\s+/g, '_');
-
-  if (slugKey && CLUB_COLOR_OVERRIDES[slugKey]) {
-    primary = primary || CLUB_COLOR_OVERRIDES[slugKey].primaryColor;
-    secondary = secondary || CLUB_COLOR_OVERRIDES[slugKey].secondaryColor;
-  } else if (nameKey && CLUB_COLOR_OVERRIDES[nameKey]) {
-    primary = primary || CLUB_COLOR_OVERRIDES[nameKey].primaryColor;
-    secondary = secondary || CLUB_COLOR_OVERRIDES[nameKey].secondaryColor;
-  }
-
-  const finalPrimary = primary && primary.startsWith('#') ? primary : defaultPrimary;
-  const finalSecondary = secondary && secondary.startsWith('#') ? secondary : defaultSecondary;
+  const resolved = resolveClubKit(club as any);
+  const finalPrimary = resolved.primaryColor;
+  const finalSecondary = resolved.secondaryColor;
   const darkColor = darkenHex(finalPrimary, 35);
 
   return {

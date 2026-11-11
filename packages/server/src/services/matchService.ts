@@ -13,6 +13,7 @@ import {
   LiveMatchState,
   MATCH_MINUTES,
   Match,
+  MatchEvent,
   MatchCompetitionType,
   FormResult,
   MatchResult,
@@ -590,6 +591,51 @@ async function weatherOfFixture(homeClub: Club, awayClubId: string): Promise<Mat
   return weatherFor(state?.currentDate ?? null, continent, fixtureWeatherKey(homeClub.id, awayClubId));
 }
 
+/**
+ * Argumentos de `simulateMatchSegment` para continuar a partida de onde o estado ao vivo parou. Um só lugar
+ * monta isso para o avanço de verdade e para a espiada (`peekLiveMatch`), de modo que as duas simulem
+ * exatamente a mesma coisa e a espiada nunca diverja do que vai ser gravado.
+ */
+function liveSegmentInput(
+  live: LiveMatchState,
+  homeClub: Club,
+  awayClub: Club,
+  rng: () => number,
+  startMinute: number,
+  endMinute: number,
+  interruptOnInjury: { home?: boolean; away?: boolean },
+  weather: MatchWeather,
+  stoppageHalf: 1 | 2 | undefined,
+): Parameters<typeof simulateMatchSegment>[0] {
+  return {
+    home: { club: homeClub, tactic: live.homeTactic },
+    away: { club: awayClub, tactic: live.awayTactic },
+    rng,
+    startMinute,
+    endMinute,
+    priorEvents: live.events,
+    homeGoals: live.homeGoals,
+    awayGoals: live.awayGoals,
+    homeShots: live.homeShots,
+    awayShots: live.awayShots,
+    homeShotsOnTarget: live.homeShotsOnTarget,
+    awayShotsOnTarget: live.awayShotsOnTarget,
+    homeCorners: live.homeCorners,
+    awayCorners: live.awayCorners,
+    homeFouls: live.homeFouls,
+    awayFouls: live.awayFouls,
+    homePressRecoveries: live.homePressRecoveries,
+    awayPressRecoveries: live.awayPressRecoveries,
+    homeGoalsFromPressRecovery: live.homeGoalsFromPressRecovery,
+    awayGoalsFromPressRecovery: live.awayGoalsFromPressRecovery,
+    interruptOnInjury,
+    interruptOnRedCard: interruptOnInjury,
+    crowdIntensity: live.crowdIntensity,
+    weather,
+    stoppageHalf,
+  };
+}
+
 async function advanceLiveMatchUnchecked(
   record: NonNullable<Awaited<ReturnType<typeof prisma.match.findUnique>>>,
   homeClub: Club,
@@ -642,33 +688,9 @@ async function advanceLiveMatchUnchecked(
 
   const rng = resumableRngFromState(live.rngState);
   const weather = await weatherOfFixture(homeClub, record.awayClubId);
-  let segment = simulateMatchSegment({
-    home: { club: homeClub, tactic: live.homeTactic },
-    away: { club: awayClub, tactic: live.awayTactic },
-    rng: rng.next,
-    startMinute,
-    endMinute: target,
-    priorEvents: live.events,
-    homeGoals: live.homeGoals,
-    awayGoals: live.awayGoals,
-    homeShots: live.homeShots,
-    awayShots: live.awayShots,
-    homeShotsOnTarget: live.homeShotsOnTarget,
-    awayShotsOnTarget: live.awayShotsOnTarget,
-    homeCorners: live.homeCorners,
-    awayCorners: live.awayCorners,
-    homeFouls: live.homeFouls,
-    awayFouls: live.awayFouls,
-    homePressRecoveries: live.homePressRecoveries,
-    awayPressRecoveries: live.awayPressRecoveries,
-    homeGoalsFromPressRecovery: live.homeGoalsFromPressRecovery,
-    awayGoalsFromPressRecovery: live.awayGoalsFromPressRecovery,
-    interruptOnInjury,
-    interruptOnRedCard: interruptOnInjury,
-    crowdIntensity: live.crowdIntensity,
-    weather,
-    stoppageHalf,
-  });
+  let segment = simulateMatchSegment(
+    liveSegmentInput(live, homeClub, awayClub, rng.next, startMinute, target, interruptOnInjury, weather, stoppageHalf),
+  );
 
   let allEvents = [...live.events, ...segment.events];
 
@@ -885,6 +907,59 @@ export async function advanceLiveMatch(
 
   const interrupt = interactive ? watchedSides(homeClub, awayClub, requestingUserId) : {};
   return advanceLiveMatchUnchecked(record, homeClub, awayClub, toMinute, interrupt);
+}
+
+/**
+ * Espia os próximos minutos SEM gravar nada: simula a partir do estado ao vivo atual, com uma cópia do RNG, e
+ * devolve só os lances que o avanço de verdade vai produzir. O campo 2D usa isso para já ter a bola perto do
+ * gol quando o lance for revelado, em vez de correr atrás dele; o placar, o som e a pausa continuam esperando
+ * o relógio chegar ao minuto, como sempre.
+ *
+ * A espiada vale para o estado de agora: se o técnico mexer na tática ou nas substituições, quem chama deve
+ * pedir de novo. Não cobre o apito final (nada a mostrar além do que o campo já tem).
+ */
+export async function peekLiveMatch(
+  matchId: string,
+  requestingUserId: string,
+  toMinute: number,
+  interactive = false,
+): Promise<MatchEvent[]> {
+  const record = await prisma.match.findUnique({ where: { id: matchId } });
+  if (!record) {
+    throw new MatchError(`Partida ${matchId} não encontrada`);
+  }
+  const homeClub = await getClub(record.homeClubId);
+  const awayClub = await getClub(record.awayClubId);
+  requireParticipant(homeClub, awayClub, requestingUserId);
+
+  if (record.status !== 'LIVE' || !record.liveStateJson) return [];
+  const live: LiveMatchState = normalizeLiveState(JSON.parse(record.liveStateJson));
+  // Alguém deve uma decisão: o relógio não anda, não há futuro para espiar.
+  if (live.pendingDecision) return [];
+
+  const interrupt = interactive ? watchedSides(homeClub, awayClub, requestingUserId) : {};
+  const stoppage = calculateStoppageTime(live.events);
+  const half1Ceiling = 45 + stoppage.half1;
+  const half2Ceiling = MATCH_MINUTES + stoppage.half2;
+
+  // Mesma regra de tempo do avanço de verdade.
+  let isFirstHalf = live.period === '1T' || (!live.period && live.currentMinute < 45);
+  if (live.period === 'HT' || live.period === '2T' || (!live.period && live.currentMinute >= 45 && Math.round(toMinute) > 45)) {
+    isFirstHalf = false;
+  }
+  const target = isFirstHalf
+    ? Math.max(live.currentMinute, Math.min(half1Ceiling, Math.round(toMinute)))
+    : Math.max(live.currentMinute, Math.min(half2Ceiling, Math.round(toMinute)));
+  if (target === live.currentMinute) return [];
+
+  const startMinute = isFirstHalf ? live.currentMinute + 1 : Math.max(46, live.currentMinute + 1);
+  const stoppageHalf = isFirstHalf ? (target > 45 ? 1 : undefined) : (target > 90 ? 2 : undefined);
+  const rng = resumableRngFromState(live.rngState);
+  const weather = await weatherOfFixture(homeClub, record.awayClubId);
+  const segment = simulateMatchSegment(
+    liveSegmentInput(live, homeClub, awayClub, rng.next, startMinute, target, interrupt, weather, stoppageHalf),
+  );
+  return segment.events;
 }
 
 /**

@@ -1,6 +1,8 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
+import { spawn } from 'node:child_process';
 import { verifyResources, waitForServer, startupPage } from './startup.js';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -17,7 +19,9 @@ if (process.env['TACTICAL_PROFILE_DIR']) app.setPath('userData', path.resolve(pr
 
 
 const EMBEDDED_SERVER_PORT = 47812;
+const ONLINE_HOST_PORT = 3001;
 const DEV_WEB_URL = 'http://localhost:5173';
+let onlineHostProcess = null;
 
 const logPath = path.join(app.getPath('userData'), 'launch.log');
 function log(message) {
@@ -37,24 +41,7 @@ function resourcesDir() {
   return app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', 'resources');
 }
 
-/** Copies the schema-ready template database into place on first launch. Never overwrites an existing save. */
-function ensureDatabase() {
-  const dbPath = path.join(app.getPath('userData'), 'tactical_arena.db');
-  if (!fs.existsSync(dbPath)) {
-    const template = path.join(resourcesDir(), 'template.db');
-    if (fs.existsSync(template)) {
-      try {
-        fs.copyFileSync(template, dbPath);
-        log(`Copied template.db to ${dbPath}`);
-      } catch (err) {
-        log(`Failed to copy template.db: ${err}`);
-      }
-    } else {
-      log(`Warning: template.db not found at ${template}`);
-    }
-  }
-  return dbPath;
-}
+const DB_VERSION = 3;
 
 function getStoredConfig() {
   const configPath = path.join(app.getPath('userData'), 'config.json');
@@ -73,6 +60,90 @@ function saveStoredConfig(newCfg) {
     const updated = { ...config, ...newCfg };
     fs.writeFileSync(configPath, JSON.stringify(updated, null, 2));
   } catch {}
+}
+
+/** Copies the schema-ready template database into place on first launch or when template updates. */
+function ensureDatabase() {
+  const dbPath = path.join(app.getPath('userData'), 'tactical_arena.db');
+  const template = path.join(resourcesDir(), 'template.db');
+  const config = getStoredConfig();
+
+  if (!fs.existsSync(dbPath) || (config.dbVersion || 0) < DB_VERSION) {
+    if (fs.existsSync(template)) {
+      try {
+        if (fs.existsSync(dbPath)) {
+          const bakPath = path.join(app.getPath('userData'), 'tactical_arena_backup_v' + (config.dbVersion || 1) + '.db');
+          try { fs.copyFileSync(dbPath, bakPath); } catch {}
+        }
+        fs.copyFileSync(template, dbPath);
+        saveStoredConfig({ dbVersion: DB_VERSION });
+        log('Synced template.db to ' + dbPath + ' (dbVersion ' + DB_VERSION + ')');
+      } catch (err) {
+        log('Failed to copy template.db: ' + err);
+      }
+    } else {
+      log('Warning: template.db not found at ' + template);
+    }
+  }
+  return dbPath;
+}
+
+function ensureOnlineDatabase() {
+  const dbPath = path.join(app.getPath('userData'), 'tactical_arena_online.db');
+  const template = path.join(resourcesDir(), 'template.db');
+  if (!fs.existsSync(dbPath) && fs.existsSync(template)) {
+    try {
+      fs.copyFileSync(template, dbPath);
+      log('Created online multiplayer database at ' + dbPath);
+    } catch (err) {
+      log('Failed to copy template.db for online mode: ' + err);
+    }
+  }
+  return dbPath;
+}
+
+function getNetworkInviteLinks(port = ONLINE_HOST_PORT) {
+  const interfaces = os.networkInterfaces();
+  const links = [];
+  for (const [name, addrs] of Object.entries(interfaces)) {
+    if (!addrs) continue;
+    for (const addr of addrs) {
+      if (addr.family !== 'IPv4' || addr.internal) continue;
+      if (addr.address.startsWith('169.254.')) continue;
+      const lower = name.toLowerCase();
+      let label = `Rede Local / Wi-Fi (${name})`;
+      let isVpn = false;
+      if (addr.address.startsWith('26.') || lower.includes('radmin')) {
+        label = `Radmin VPN (${name})`;
+        isVpn = true;
+      } else if (addr.address.startsWith('100.') || lower.includes('tailscale') || lower.includes('zerotier')) {
+        label = `Tailscale / ZeroTier (${name})`;
+        isVpn = true;
+      } else if (addr.address.startsWith('25.') || lower.includes('hamachi')) {
+        label = `Hamachi VPN (${name})`;
+        isVpn = true;
+      } else if (lower.includes('vpn') || lower.includes('tun') || lower.includes('tap') || lower.includes('zt')) {
+        label = `Rede VPN (${name})`;
+        isVpn = true;
+      }
+      links.push({
+        label,
+        ip: addr.address,
+        url: `http://${addr.address}:${port}`,
+        isVpn,
+      });
+    }
+  }
+  links.sort((a, b) => (a.isVpn === b.isVpn ? 0 : a.isVpn ? -1 : 1));
+  if (links.length === 0) {
+    links.push({
+      label: 'Servidor Local (Este PC)',
+      ip: '127.0.0.1',
+      url: `http://127.0.0.1:${port}`,
+      isVpn: false,
+    });
+  }
+  return links;
 }
 
 /** Generates a random JWT signing secret on first launch and persists it, instead of shipping a fixed dev secret. */
@@ -249,6 +320,100 @@ ipcMain.handle('app:set-fullscreen', (_e, flag) => {
   win.setFullScreen(!!flag);
   saveStoredConfig({ fullscreen: !!flag });
   return !!flag;
+});
+
+ipcMain.handle('app:get-online-host-status', async () => {
+  const inviteLinks = getNetworkInviteLinks(ONLINE_HOST_PORT);
+  try {
+    const res = await fetch(`http://127.0.0.1:${ONLINE_HOST_PORT}/health`);
+    if (res.ok) {
+      return {
+        ok: true,
+        running: true,
+        port: ONLINE_HOST_PORT,
+        hostUrl: `http://127.0.0.1:${ONLINE_HOST_PORT}`,
+        inviteLinks,
+      };
+    }
+  } catch {}
+  return {
+    ok: true,
+    running: false,
+    port: ONLINE_HOST_PORT,
+    hostUrl: `http://127.0.0.1:${ONLINE_HOST_PORT}`,
+    inviteLinks,
+  };
+});
+
+ipcMain.handle('app:start-online-host', async () => {
+  const inviteLinks = getNetworkInviteLinks(ONLINE_HOST_PORT);
+  try {
+    const res = await fetch(`http://127.0.0.1:${ONLINE_HOST_PORT}/health`);
+    if (res.ok) {
+      return {
+        ok: true,
+        running: true,
+        port: ONLINE_HOST_PORT,
+        hostUrl: `http://127.0.0.1:${ONLINE_HOST_PORT}`,
+        inviteLinks,
+      };
+    }
+  } catch {}
+
+  try {
+    const resDir = resourcesDir();
+    const onlineDbPath = ensureOnlineDatabase();
+    const bundlePath = path.join(resDir, 'server-bundle.cjs');
+    const childEnv = { ...process.env };
+    childEnv['DESKTOP_MODE'] = 'false';
+    childEnv['ELECTRON_RUN_AS_NODE'] = '1';
+    childEnv['APP_MODE'] = 'hosted';
+    childEnv['HOST'] = '0.0.0.0';
+    childEnv['PORT'] = String(ONLINE_HOST_PORT);
+    childEnv['CORS_ORIGINS'] = 'http://127.0.0.1:47812,http://localhost:47812,http://127.0.0.1:5173,http://localhost:5173';
+    childEnv['DATABASE_URL'] = `file:${onlineDbPath.replace(/\\/g, '/')}`;
+    childEnv['TACTICAL_ARENA_TEMPLATE_DATABASE_PATH'] = path.join(resDir, 'template.db');
+    childEnv['WEB_DIST_PATH'] = path.join(resDir, 'web-dist');
+    childEnv['JWT_SECRET'] = ensureJwtSecret();
+
+    log(`Starting online host server on 0.0.0.0:${ONLINE_HOST_PORT} (${bundlePath})...`);
+    onlineHostProcess = spawn(process.execPath, [bundlePath], {
+      cwd: resDir,
+      env: childEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    onlineHostProcess.stdout?.on('data', (chunk) => log(`[online-host] ${String(chunk).trim()}`));
+    onlineHostProcess.stderr?.on('data', (chunk) => log(`[online-host err] ${String(chunk).trim()}`));
+    onlineHostProcess.on('exit', (code) => {
+      log(`Online host server exited with code ${code}`);
+      onlineHostProcess = null;
+    });
+
+    await waitForServer(`http://127.0.0.1:${ONLINE_HOST_PORT}/health`, 25_000, () => null);
+    log(`Online host server is up on port ${ONLINE_HOST_PORT}`);
+    return {
+      ok: true,
+      running: true,
+      port: ONLINE_HOST_PORT,
+      hostUrl: `http://127.0.0.1:${ONLINE_HOST_PORT}`,
+      inviteLinks,
+    };
+  } catch (err) {
+    log(`Failed to start online host server: ${err?.stack ?? err}`);
+    return {
+      ok: false,
+      running: false,
+      error: err instanceof Error ? err.message : String(err),
+      inviteLinks,
+    };
+  }
+});
+
+app.on('will-quit', () => {
+  if (onlineHostProcess) {
+    try { onlineHostProcess.kill(); } catch {}
+    onlineHostProcess = null;
+  }
 });
 
 /**

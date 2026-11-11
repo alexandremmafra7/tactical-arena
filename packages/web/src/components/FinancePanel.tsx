@@ -100,6 +100,21 @@ export function FinancePanel({ club, onUpdate, onError, secao = 'conta' }: Finan
   >(null);
   const [signingOfferId, setSigningOfferId] = useState<string | null>(null);
   const [takingLoan, setTakingLoan] = useState(false);
+  const [dismissedOfferIds, setDismissedOfferIds] = useState<Set<string>>(new Set());
+
+  function handleDismissOffer(offerId: string) {
+    setDismissedOfferIds((prev) => new Set([...prev, offerId]));
+  }
+
+  function handleDismissAllPoachOffers() {
+    setDismissedOfferIds((prev) => {
+      const next = new Set(prev);
+      offers?.forEach((o) => {
+        if (o.isPoachOffer) next.add(o.id);
+      });
+      return next;
+    });
+  }
 
   const totalWeekly = club.sponsorships.reduce((acc, s) => acc + s.weeklyAmount, 0);
   const estimatedAnnual = totalWeekly * 52;
@@ -147,6 +162,19 @@ export function FinancePanel({ club, onUpdate, onError, secao = 'conta' }: Finan
     try {
       const anterior = club.sponsorships.find((s) => s.type === offer.type);
       const updated = await signSponsorship(club.id, offer);
+
+      // Ao aceitar uma proposta para uma cota, descarta a própria e todas as outras propostas concorrentes da mesma cota
+      setDismissedOfferIds((prev) => {
+        const next = new Set(prev);
+        next.add(offer.id);
+        offers?.forEach((o) => {
+          if (o.type === offer.type || (anterior && o.replacedSponsorName === anterior.sponsorName)) {
+            next.add(o.id);
+          }
+        });
+        return next;
+      });
+
       onUpdate(updated);
       setAssinado({
         sponsorName: offer.sponsorName,
@@ -155,12 +183,14 @@ export function FinancePanel({ club, onUpdate, onError, secao = 'conta' }: Finan
         substituido: anterior?.sponsorName ?? null,
       });
 
-      // Recarrega propostas para atualizar o incumbente e permitir negociar outras cotas
+      // Recarrega propostas para atualizar o incumbente e permitir negociar outras cotas,
+      // filtrando qualquer proposta remanescente da cota recém-assinada para evitar que
+      // ofertas rivais menos favoráveis continuem na tela e induzam o jogador a erro.
       try {
         const freshOffers = await getSponsorshipOffers(club.id);
-        setOffers(freshOffers);
+        setOffers(freshOffers.filter((o) => o.type !== offer.type && o.id !== offer.id));
       } catch {
-        setOffers((prev) => (prev ? prev.filter((o) => o.id !== offer.id) : null));
+        setOffers((prev) => (prev ? prev.filter((o) => o.type !== offer.type && o.id !== offer.id) : null));
       }
     } catch (err) {
       onError((err as Error).message);
@@ -186,20 +216,6 @@ export function FinancePanel({ club, onUpdate, onError, secao = 'conta' }: Finan
 
   const amountForPreview = Number(loanAmount) || 0;
 
-  // Group candidate proposals by sponsorship type
-  const offersByType = new Map<Sponsorship["type"], Sponsorship[]>();
-  const poachOffers: Sponsorship[] = [];
-
-  offers?.forEach((o) => {
-    if (o.isPoachOffer) {
-      poachOffers.push(o);
-    } else {
-      const list = offersByType.get(o.type) ?? [];
-      list.push(o);
-      offersByType.set(o.type, list);
-    }
-  });
-
   /**
    * What already occupies each slot.
    *
@@ -209,6 +225,25 @@ export function FinancePanel({ club, onUpdate, onError, secao = 'conta' }: Finan
    * negotiation table exists to avoid.
    */
   const activeByType = new Map(club.sponsorships.map((s) => [s.type, s]));
+
+  // Group candidate proposals by sponsorship type
+  const offersByType = new Map<Sponsorship["type"], Sponsorship[]>();
+  const poachOffers: Sponsorship[] = [];
+
+  offers?.forEach((o) => {
+    if (dismissedOfferIds.has(o.id)) return;
+    if (o.isPoachOffer) {
+      const atual = activeByType.get(o.type);
+      // Se não há patrocinador para rescindir, ou o patrocinador atual já é o próprio, ou o patrocinador atual já mudou em relação a quem essa proposta veio substituir, ou o valor semanal não é superior ao atual, descarta
+      if (!atual || atual.sponsorName === o.sponsorName || o.weeklyAmount <= atual.weeklyAmount) return;
+      if (o.replacedSponsorName && atual.sponsorName !== o.replacedSponsorName) return;
+      poachOffers.push(o);
+    } else {
+      const list = offersByType.get(o.type) ?? [];
+      list.push(o);
+      offersByType.set(o.type, list);
+    }
+  });
 
   return (
     <div className="finance-pro-container">
@@ -302,24 +337,38 @@ export function FinancePanel({ club, onUpdate, onError, secao = 'conta' }: Finan
           {poachOffers.length > 0 && (
             <div className="poach-alert-container">
               <div className="poach-alert-header">
-                
                 <div>
                   <h3 className="poach-alert-title">PROPOSTAS CONCORRENTES NO MEIO DA TEMPORADA!</h3>
                   <p className="poach-alert-desc">
                     O excelente desempenho do seu time atraiu concorrentes de peso no mercado dispostos a cobrir a rescisão e
-                    aumentar drasticamente as receitas do clube!
+                    aumentar as receitas do clube!
                   </p>
                 </div>
+                <button
+                  type="button"
+                  className="poach-dismiss-all-btn"
+                  onClick={handleDismissAllPoachOffers}
+                  title="Dispensar todas as propostas concorrentes"
+                >
+                  ✕ Dispensar Propostas
+                </button>
               </div>
 
               <div className="poach-cards-grid">
                 {poachOffers.map((o) => {
-                  const slug = sponsorArtSlug(o.sponsorName);
                   const isSigning = signingOfferId === o.id;
                   const profile = getProfileBadge(o.sponsorProfile);
+                  const atual = activeByType.get(o.type);
+                  const cotaNome = sponsorTypeLabel(o.type);
+                  const ganhoSemanal = atual ? o.weeklyAmount - atual.weeklyAmount : o.weeklyAmount;
 
                   return (
                     <div key={o.id} className="poach-offer-card">
+                      <div className="poach-cota-header">
+                        <span className="poach-cota-badge">COTA: {cotaNome.toUpperCase()}</span>
+                        <span className="poach-cota-hint">Concorre pela cota de {cotaNome}</span>
+                      </div>
+
                       <div className="poach-card-top">
                         <div className="sponsor-pro-logo-wrap">
                           <img
@@ -331,13 +380,31 @@ export function FinancePanel({ club, onUpdate, onError, secao = 'conta' }: Finan
                           />
                         </div>
                         <div style={{ flex: 1 }}>
-                          <span className="poach-replace-tag">Substituir {o.replacedSponsorName}</span>
+                          <span className="poach-replace-tag">Substituir {o.replacedSponsorName || atual?.sponsorName}</span>
                           <h4 className="poach-sponsor-name">{o.sponsorName}</h4>
                           <span className={`sponsor-profile-tag ${profile.className}`}>
                             {profile.icon} {profile.label}
                           </span>
                         </div>
                       </div>
+
+                      {/* Quadro Comparativo: Atual vs Proposta */}
+                      {atual && (
+                        <div className="poach-vs-box">
+                          <div className="poach-vs-row">
+                            <span className="poach-vs-label">Atual ({atual.sponsorName}):</span>
+                            <span className="poach-vs-val muted">{formatMoney(atual.weeklyAmount)}/sem</span>
+                          </div>
+                          <div className="poach-vs-row highlight">
+                            <span className="poach-vs-label">Nova Proposta:</span>
+                            <span className="poach-vs-val gold">{formatMoney(o.weeklyAmount)}/sem</span>
+                          </div>
+                          <div className="poach-vs-delta">
+                            <span>Aumento Líquido:</span>
+                            <strong className="green">+{formatMoney(ganhoSemanal)}/sem</strong>
+                          </div>
+                        </div>
+                      )}
 
                       <div className="poach-financial-row">
                         <div className="poach-stat-col">
@@ -364,14 +431,24 @@ export function FinancePanel({ club, onUpdate, onError, secao = 'conta' }: Finan
                         </div>
                       )}
 
-                      <button
-                        type="button"
-                        className="btn-options-action save poach-action-btn"
-                        onClick={() => handleSignSponsorship(o)}
-                        disabled={isSigning}
-                      >
-                        {isSigning ? 'Assinando e Rompendo...' : 'Trocar de Patrocinador Agora'}
-                      </button>
+                      <div className="poach-buttons-row">
+                        <button
+                          type="button"
+                          className="btn-options-action save poach-action-btn"
+                          onClick={() => handleSignSponsorship(o)}
+                          disabled={isSigning}
+                        >
+                          {isSigning ? 'Assinando e Rompendo...' : `Aceitar e Trocar ${cotaNome}`}
+                        </button>
+                        <button
+                          type="button"
+                          className="poach-reject-btn"
+                          onClick={() => handleDismissOffer(o.id)}
+                          disabled={isSigning}
+                        >
+                          Recusar (Manter {atual?.sponsorName ?? 'Atual'})
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -380,18 +457,19 @@ export function FinancePanel({ club, onUpdate, onError, secao = 'conta' }: Finan
           )}
 
           {/*
-            A confirmação fica colada no quadro que mudou quando a mesa estiver fechada.
-            É a resposta ao "cliquei e não aconteceu nada": diz quem entrou, por quanto, e quem saiu.
+            Confirmação de contrato assinado: informa claramente quem entrou, por quanto,
+            e quem foi substituído, confirmando que propostas concorrentes foram encerradas.
           */}
-          {assinado && offers === null && (
-            <div className="contrato-assinado" role="status">
+          {assinado && (
+            <div className="contrato-assinado" role="status" style={{ marginBottom: 16 }}>
               <span className="contrato-assinado-icone" aria-hidden="true">✓</span>
               <div className="contrato-assinado-texto">
-                <strong>Contrato assinado com {assinado.sponsorName}</strong>
+                <strong>Contrato assinado com {assinado.sponsorName}!</strong>
                 <span>
                   {formatMoney(assinado.weeklyAmount)}/sem
-                  {assinado.signingBonus > 0 && ` e ${formatMoney(assinado.signingBonus)} de luva no caixa`}
-                  {assinado.substituido && `, no lugar de ${assinado.substituido}`}
+                  {assinado.signingBonus > 0 && ` e +${formatMoney(assinado.signingBonus)} de bônus imediato no caixa`}
+                  {assinado.substituido && ` (substituindo ${assinado.substituido})`}
+                  . As propostas concorrentes para esta cota foram encerradas.
                 </span>
               </div>
               <button type="button" className="contrato-assinado-fechar" onClick={() => setAssinado(null)} aria-label="Fechar aviso">
@@ -666,20 +744,33 @@ export function FinancePanel({ club, onUpdate, onError, secao = 'conta' }: Finan
                             </div>
                           )}
 
-                          <button
-                            type="button"
-                            className="btn-options-action save proposal-sign-btn"
-                            onClick={() => handleSignSponsorship(o)}
-                            disabled={isSigning}
-                          >
-                            {isSigning
-                              ? 'Assinando...'
-                              : o.isChallenge
-                                ? 'Trocar Naming Rights'
-                                : atual
-                                  ? `Trocar ${atual.sponsorName} por esta`
-                                  : 'Fechar com Esta Empresa'}
-                          </button>
+                          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                            <button
+                              type="button"
+                              className="btn-options-action save proposal-sign-btn"
+                              style={{ flex: 1 }}
+                              onClick={() => handleSignSponsorship(o)}
+                              disabled={isSigning}
+                            >
+                              {isSigning
+                                ? 'Assinando...'
+                                : o.isChallenge
+                                  ? 'Trocar Naming Rights'
+                                  : atual
+                                    ? `Assinar e Trocar (${atual.sponsorName})`
+                                    : 'Fechar com Esta Empresa'}
+                            </button>
+                            <button
+                              type="button"
+                              className="poach-reject-btn"
+                              style={{ padding: '8px 12px', fontSize: '0.8rem' }}
+                              onClick={() => handleDismissOffer(o.id)}
+                              disabled={isSigning}
+                              title="Dispensar esta proposta da mesa de negociação"
+                            >
+                              ✕ Dispensar
+                            </button>
+                          </div>
                         </div>
                       );
                     })}

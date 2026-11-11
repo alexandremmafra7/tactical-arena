@@ -554,30 +554,49 @@ export function simulateMatchSegment(input: SimulateMatchSegmentInput): MatchSeg
     const isSecondHalf = minute >= 46;
     const scoreDiff = homeGoals - awayGoals;
 
-    // Game State Pacing & Blowout Modulation:
-    // Leading teams manage risk & possession in 2nd half, slowing down chance rate unless they are on TOTAL_ATTACK.
-    // Trailing teams compact defensively unless they are shorthanded (red card) or have broken morale.
+    // Game State Pacing & Blowout Governor:
+    // Leading teams manage risk, circulate possession, and lower tempo.
+    // Trailing teams compact defensively in deeper lines to avoid humiliation.
     let homeGameStateChanceMult = 1.0;
     let awayGameStateChanceMult = 1.0;
     let homeGameStateDefenseMult = 1.0;
     let awayGameStateDefenseMult = 1.0;
 
-    if (isSecondHalf) {
-      if (scoreDiff >= 2) {
-        if (homeTactic.attackApproach !== 'TOTAL_ATTACK') {
-          homeGameStateChanceMult = scoreDiff >= 3 ? 0.78 : 0.86;
-        }
-        if (away.missingPlayers === 0) {
-          awayGameStateDefenseMult = scoreDiff >= 3 ? 1.15 : 1.06;
-        }
-      } else if (scoreDiff <= -2) {
-        if (awayTactic.attackApproach !== 'TOTAL_ATTACK') {
-          awayGameStateChanceMult = scoreDiff <= -3 ? 0.78 : 0.86;
-        }
-        if (home.missingPlayers === 0) {
-          homeGameStateDefenseMult = scoreDiff <= -3 ? 1.15 : 1.06;
-        }
+    const absDiff = Math.abs(scoreDiff);
+    if (absDiff >= 2) {
+      const isLeaderHome = scoreDiff > 0;
+      const leaderTactic = isLeaderHome ? homeTactic : awayTactic;
+      const isTotalAttack = leaderTactic.attackApproach === 'TOTAL_ATTACK';
+
+      let leaderChanceMult = 1.0;
+      let trailerDefMult = 1.0;
+
+      if (absDiff >= 4) {
+        leaderChanceMult = isTotalAttack ? 0.45 : 0.28;
+        trailerDefMult = 1.60;
+      } else if (absDiff >= 3) {
+        leaderChanceMult = isTotalAttack ? 0.65 : 0.48;
+        trailerDefMult = 1.35;
+      } else {
+        leaderChanceMult = isTotalAttack ? 0.88 : (isSecondHalf ? 0.76 : 0.84);
+        trailerDefMult = isSecondHalf ? 1.18 : 1.10;
       }
+
+      if (isLeaderHome) {
+        homeGameStateChanceMult = leaderChanceMult;
+        if (away.missingPlayers === 0) awayGameStateDefenseMult = trailerDefMult;
+      } else {
+        awayGameStateChanceMult = leaderChanceMult;
+        if (home.missingPlayers === 0) homeGameStateDefenseMult = trailerDefMult;
+      }
+    }
+
+    // High scoring match dampener: partidas com 5+ gols sofrem desgaste físico e cautela defensiva mútua
+    const matchGoalsSum = homeGoals + awayGoals;
+    if (matchGoalsSum >= 5) {
+      const highSumDampener = matchGoalsSum >= 6 ? 0.60 : 0.78;
+      homeGameStateChanceMult *= highSumDampener;
+      awayGameStateChanceMult *= highSumDampener;
     }
 
     /**
@@ -791,8 +810,11 @@ export function simulateMatchSegment(input: SimulateMatchSegmentInput): MatchSeg
       homeFouls++;
       const fouler = pickFouler(home.lineupPlayers, rng);
       const dismissed = resolveFoul(fouler, 'home', away.lineupPlayers, minute, bookedPlayerIds(timeline(), 'home'), rng, events);
-      if (dismissed && input.interruptOnRedCard?.home) {
-        pendingDecision = { type: 'redCard', side: 'home', playerId: dismissed, minute };
+      if (dismissed) {
+        refreshAvailability();
+        if (input.interruptOnRedCard?.home) {
+          pendingDecision = { type: 'redCard', side: 'home', playerId: dismissed, minute };
+        }
       }
     }
 
@@ -800,8 +822,11 @@ export function simulateMatchSegment(input: SimulateMatchSegmentInput): MatchSeg
       awayFouls++;
       const fouler = pickFouler(away.lineupPlayers, rng);
       const dismissed = resolveFoul(fouler, 'away', home.lineupPlayers, minute, bookedPlayerIds(timeline(), 'away'), rng, events);
-      if (dismissed && input.interruptOnRedCard?.away) {
-        pendingDecision = { type: 'redCard', side: 'away', playerId: dismissed, minute };
+      if (dismissed) {
+        refreshAvailability();
+        if (input.interruptOnRedCard?.away) {
+          pendingDecision = { type: 'redCard', side: 'away', playerId: dismissed, minute };
+        }
       }
     }
 
@@ -1362,8 +1387,8 @@ export function chanceProbability(
   urgency: number = 1.0,
 ): number {
   const delta = attack - opponentDefense;
-  const fromStrength = sigmoidCurve(delta, CHANCE_BASE_PROB, 0.04, 0.28, 0.024);
-  return clamp(fromStrength * chanceModifier * matchupChance * urgency, 0.02, 0.32);
+  const fromStrength = sigmoidCurve(delta, CHANCE_BASE_PROB, 0.04, 0.26, 0.022);
+  return clamp(fromStrength * chanceModifier * matchupChance * urgency, 0.02, 0.28);
 }
 
 /** Same attack-vs-defense shape as `chanceProbability`, on its own independent roll — a corner isn't
@@ -1413,8 +1438,8 @@ export function goalProbability(
   const delta = attack - (opponentGoalkeeping * 0.6 + opponentDefense * 0.4);
   // Conversion sits near football's ~10.5% and rises gently with a real quality gap.
   // The controlled ceiling keeps the better side winning through shot volume with only a mild conversion premium.
-  const fromStrength = sigmoidCurve(delta, GOAL_BASE_PROB, 0.02, 0.14, 0.022);
-  return clamp(fromStrength * goalModifier * matchupGoal, 0.02, 0.28);
+  const fromStrength = sigmoidCurve(delta, GOAL_BASE_PROB, 0.02, 0.135, 0.021);
+  return clamp(fromStrength * goalModifier * matchupGoal, 0.02, 0.25);
 }
 
 /**
@@ -1501,9 +1526,20 @@ export function suggestedReplacement(candidates: Player[], tactic: Tactic, injur
   const uncommitted = candidates.filter((p) => !committed.has(p.id));
   const group = uncommitted.length > 0 ? uncommitted : candidates;
 
-  const likeForLike = group.filter((p) => p.position === injured.position);
-  const pool = likeForLike.length > 0 ? likeForLike : group;
-  return pool.reduce((best, p) => (p.overall > best.overall ? p : best));
+  if (injured.position === 'GK') {
+    const gkPool = group.filter((p) => p.position === 'GK');
+    if (gkPool.length > 0) {
+      return gkPool.reduce((best, p) => (p.overall > best.overall ? p : best));
+    }
+    return group.reduce((best, p) => (p.overall > best.overall ? p : best));
+  }
+
+  // Outfield player injured: never pick a GK unless only GKs exist on the bench
+  const outfield = group.filter((p) => p.position !== 'GK');
+  const pool = outfield.length > 0 ? outfield : group;
+  const likeForLike = pool.filter((p) => p.position === injured.position);
+  const finalPool = likeForLike.length > 0 ? likeForLike : pool;
+  return finalPool.reduce((best, p) => (p.overall > best.overall ? p : best));
 }
 
 /**
@@ -1628,7 +1664,8 @@ function resolveChance(
   // Fator individual de finalização do jogador: finalizadores de elite e craques convertem a uma taxa
   // significativamente maior do que um atleta comum, mantendo o ponto de equilíbrio centrado no atacante padrão (~74).
   const shooterFinishingMult = 1 + ((scorer.attributes.finishing - 74) / 160) + (starFactor(scorer) - 1) * 0.5;
-  const effectiveGoalProb = clamp(goalProb * Math.max(0.75, Math.min(1.28, shooterFinishingMult)), 0.02, 0.30);
+  const leadGovernor = goalDifference >= 4 ? 0.65 : goalDifference >= 3 ? 0.80 : goalDifference >= 2 ? 0.92 : 1.0;
+  const effectiveGoalProb = clamp(goalProb * Math.max(0.75, Math.min(1.28, shooterFinishingMult)) * leadGovernor, 0.02, 0.24);
 
   if (rng() < effectiveGoalProb) {
     const isSoloBrilliance = (starFactor(scorer) >= 1.08 || scorer.attributes.finishing >= 85) && rng() < 0.35;

@@ -64,7 +64,7 @@ import { recordPredictionOnce } from '../services/staffRecordService.js';
 import { getGameState } from '../services/gameStateService.js';
 import { moodFor } from '@tactical-arena/shared';
 import { prisma } from '../db/prisma.js';
-import { GameModeError } from '../services/gameModeService.js';
+import { GameModeError, setRuntimeGameMode } from '../services/gameModeService.js';
 import { getManagerStyle } from '../services/managerStyleService.js';
 
 /**
@@ -231,6 +231,10 @@ clubsRouter.post('/found', async (req: AuthedRequest, res) => {
 
 clubsRouter.post('/:id/claim', async (req: AuthedRequest, res) => {
   try {
+    const { gameMode } = req.body ?? {};
+    if (gameMode === 'STANDARD' || gameMode === 'PREMIUM' || gameMode === 'HARDCORE') {
+      setRuntimeGameMode(req.userId!, gameMode);
+    }
     const club = await claimClub(req.params.id, req.userId!);
     res.json(club);
   } catch (err) {

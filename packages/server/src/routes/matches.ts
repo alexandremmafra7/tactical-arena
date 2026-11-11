@@ -3,6 +3,7 @@ import { LineupValidationError, totalCupRounds } from '@tactical-arena/shared';
 import { requireAuth, AuthedRequest } from '../middleware/auth.js';
 import {
   advanceLiveMatch,
+  peekLiveMatch,
   createMatch,
   getMatch,
   getNextActionableMatch,
@@ -162,6 +163,28 @@ matchesRouter.post('/:id/live/advance', async (req: AuthedRequest, res) => {
   try {
     const match = await advanceLiveMatch(req.params.id, req.userId!, toMinute, interactive === true);
     res.json(match);
+  } catch (err) {
+    if (err instanceof MatchError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    throw err;
+  }
+});
+
+/**
+ * Espia os próximos minutos sem gravar nada — só para o campo 2D chegar ao lance antes do relógio. Devolve os
+ * lances que o avanço de verdade vai produzir até `toMinute`; ver peekLiveMatch.
+ */
+matchesRouter.post('/:id/live/peek', async (req: AuthedRequest, res) => {
+  const { toMinute, interactive } = req.body ?? {};
+  if (typeof toMinute !== 'number') {
+    res.status(400).json({ error: 'toMinute é obrigatório' });
+    return;
+  }
+
+  try {
+    res.json({ events: await peekLiveMatch(req.params.id, req.userId!, toMinute, interactive === true) });
   } catch (err) {
     if (err instanceof MatchError) {
       res.status(400).json({ error: err.message });

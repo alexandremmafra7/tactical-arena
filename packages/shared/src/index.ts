@@ -87,6 +87,7 @@ export * from './domain/matchDrama.js';
 export * from './domain/quickPlay.js';
 export * from './domain/p2pMultiplayer.js';
 export * from './domain/clubColors.js';
+export * from './domain/clubKits.js';
 export * from './domain/fifaCalendar.js';
 export * from './domain/hallOfFame.js';
 export * from './domain/dynamicTactics.js';

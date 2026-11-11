@@ -1935,7 +1935,9 @@ li.round-ticker-row-mine .round-ticker-score {
 }
 
 .pitch-player-node {
-  transition: transform 0.4s ease;
+  /* O usePitchAgents já calcula a posição ~30 vezes por segundo; a transição linear só liga um passo ao seguinte. */
+  transition: transform 40ms linear;
+  will-change: transform;
 }
 
 .pitch-player-home,
@@ -1945,6 +1947,8 @@ li.round-ticker-row-mine .round-ticker-score {
 
 .pitch-ball-node {
   will-change: transform;
+  transform-box: view-box;
+  transform-origin: 0 0;
 }
 
 .pitch-footer-radar {
@@ -2003,6 +2007,7 @@ li.round-ticker-row-mine .round-ticker-score {
 
 @media (prefers-reduced-motion: reduce) {
   .pitch-ball-node,
+  .pitch-player-node,
   .pitch-possession-bar,
   .pitch-zone-rect,
   .pitch-action-header,
@@ -12639,9 +12644,29 @@ li.round-ticker-row-mine .round-ticker-score {
 
 .poach-alert-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 14px;
   margin-bottom: 16px;
+}
+
+.poach-dismiss-all-btn {
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  color: var(--muted, #cbd5e1);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.poach-dismiss-all-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #f87171;
 }
 
 .poach-fire-icon {
@@ -12667,18 +12692,47 @@ li.round-ticker-row-mine .round-ticker-score {
 
 .poach-cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 16px;
 }
 
 .poach-offer-card {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  background: rgba(15, 23, 42, 0.85);
-  border: 1px solid rgba(245, 158, 11, 0.35);
-  border-radius: 12px;
-  padding: 16px;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1.5px solid rgba(245, 158, 11, 0.45);
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.poach-cota-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.poach-cota-badge {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 3px 10px;
+  background: linear-gradient(135deg, rgba(212, 175, 55, 0.25) 0%, rgba(245, 158, 11, 0.15) 100%);
+  border: 1px solid rgba(212, 175, 55, 0.6);
+  border-radius: 6px;
+  color: #facc15;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.poach-cota-hint {
+  font-size: 0.74rem;
+  color: #94a3b8;
+  font-style: italic;
 }
 
 .poach-card-top {
@@ -12689,7 +12743,7 @@ li.round-ticker-row-mine .round-ticker-score {
 
 .poach-replace-tag {
   display: inline-block;
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   font-weight: 800;
   color: #f87171;
   text-transform: uppercase;
@@ -12697,8 +12751,61 @@ li.round-ticker-row-mine .round-ticker-score {
 
 .poach-sponsor-name {
   margin: 2px 0 4px;
-  font-size: 1.05rem;
+  font-size: 1.12rem;
   color: #f8fafc;
+  font-weight: 800;
+}
+
+.poach-vs-box {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.poach-vs-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8rem;
+}
+
+.poach-vs-row.highlight {
+  font-weight: 700;
+}
+
+.poach-vs-label {
+  color: #cbd5e1;
+}
+
+.poach-vs-val.muted {
+  color: #94a3b8;
+  text-decoration: line-through;
+}
+
+.poach-vs-val.gold {
+  color: #facc15;
+  font-size: 0.88rem;
+}
+
+.poach-vs-delta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  font-size: 0.78rem;
+  color: #94a3b8;
+}
+
+.poach-vs-delta .green {
+  color: #4ade80;
+  font-weight: 800;
+  font-size: 0.84rem;
 }
 
 .poach-financial-row {
@@ -12735,12 +12842,51 @@ li.round-ticker-row-mine .round-ticker-score {
   font-weight: 800;
 }
 
+.sub-annual {
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+
+.poach-buttons-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
 .poach-action-btn {
-  width: 100%;
-  padding: 10px;
+  flex: 1.4;
+  padding: 11px 12px;
   background: linear-gradient(135deg, #d97706 0%, #b45309 100%) !important;
   color: #fff !important;
   font-weight: 800;
+  font-size: 0.84rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.poach-action-btn:hover {
+  filter: brightness(1.15);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
+}
+
+.poach-reject-btn {
+  flex: 1;
+  padding: 11px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #cbd5e1;
+  font-weight: 700;
+  font-size: 0.82rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.poach-reject-btn:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
 }
 
 /* Mesa de Negociação (Multi-Offer Grid) */
@@ -14389,74 +14535,112 @@ li.round-ticker-row-mine .round-ticker-score {
    ========================================================================== */
 
 .briefing-header {
-  background: linear-gradient(160deg, #1a1712 0%, #0e0d0b 100%);
+  background: linear-gradient(160deg, #181510 0%, #0d0c0a 100%);
   border: 1px solid #4a3f2660;
-  border-radius: 14px;
-  padding: 18px 20px 22px;
-  margin-bottom: 18px;
+  border-radius: 12px;
+  padding: 12px 18px 16px;
+  margin-bottom: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
 }
 
 .briefing-comp {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  padding-bottom: 16px;
+  padding-bottom: 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.briefing-comp-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.briefing-comp-info {
+  display: flex;
+  flex-direction: column;
+}
+
 .briefing-comp-logo {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   object-fit: contain;
 }
 
 .briefing-comp-name {
   display: block;
   font-family: var(--font-display);
-  font-size: 1.24rem;
+  font-size: 1.15rem;
   letter-spacing: 0.03em;
   color: var(--accent);
+  line-height: 1.15;
 }
 
 .briefing-comp-round {
   display: block;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   color: var(--muted);
+}
+
+.header-status-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.header-status-badge.ok {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+
+.header-status-badge.pendente {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
 }
 
 .briefing-matchup {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
-  align-items: start;
-  gap: 14px;
-  padding-top: 18px;
+  align-items: center;
+  gap: 18px;
+  padding-top: 12px;
 }
 
 .briefing-side {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   text-align: center;
   min-width: 0;
 }
 
 .briefing-side-crest-empty {
-  width: 52px;
-  height: 52px;
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
   border: 1px dashed rgba(255, 255, 255, 0.18);
 }
 
 .briefing-side-name {
   font-family: var(--font-display);
-  font-size: 1.18rem;
+  font-size: 1.12rem;
   letter-spacing: 0.02em;
   line-height: 1.15;
 }
 
 .briefing-side-pos {
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   color: var(--muted);
 }
 
@@ -14470,70 +14654,330 @@ li.round-ticker-row-mine .round-ticker-score {
   opacity: 0.7;
 }
 
-.briefing-vs {
-  font-family: var(--font-display);
-  font-size: 1.5rem;
-  color: var(--muted);
-  align-self: center;
-}
-
-.briefing-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 16px;
-  align-items: start;
-}
-
-.briefing-grid .card h3 {
-  margin: 0 0 10px;
-  font-size: 0.95rem;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  color: var(--muted);
-}
-
-/* A escalação pendente é a única coisa nesta tela que impede entrar em campo, então ela se destaca. */
-.briefing-lineup.pendente {
-  border-color: #f5c54266;
-}
-
-.briefing-lineup-state {
-  font-size: 0.98rem;
-  font-weight: 700;
-  margin: 0 0 6px;
-}
-
-.briefing-lineup-state.ok {
-  color: #7ddba1;
-}
-
-.briefing-lineup-state.pendente {
-  color: #f5c542;
-}
-
-.briefing-outs {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 16px;
-}
-
-.briefing-outs-club {
-  display: block;
-  font-size: 0.74rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--accent);
-  margin-bottom: 6px;
-}
-
-.briefing-outs-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+/* Centro de Ação do Confronto (Hero Kickoff & Quick Actions) */
+.briefing-center-action {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  font-size: 0.85rem;
+  align-items: center;
+  gap: 8px;
+  min-width: 280px;
+  max-width: 380px;
+}
+
+.briefing-vs-badge {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  opacity: 0.75;
+}
+
+.briefing-hero-kickoff {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 13px 22px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%);
+  color: #120e07;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transition: all 0.18s ease;
+  text-decoration: none;
+}
+
+.briefing-hero-kickoff:hover:not(:disabled) {
+  filter: brightness(1.12);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 22px rgba(245, 158, 11, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.briefing-hero-kickoff:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+.kickoff-hero-icon {
+  font-size: 1.15rem;
+}
+
+.kickoff-hero-sub {
+  font-size: 0.78rem;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.briefing-hero-actions {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.btn-briefing-quick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--fg);
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-briefing-quick:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.28);
+  color: #ffffff;
+}
+
+.btn-briefing-quick.btn-quick-assistant {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #6ee7b7;
+}
+
+.btn-briefing-quick.btn-quick-assistant:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.28);
+  color: #a7f3d0;
+}
+
+.btn-briefing-quick.urgent,
+.btn-briefing-quick.btn-quick-autofill {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.4);
+  color: #fcd34d;
+}
+
+/* Faixa de Status de Pré-Jogo (Compact 3-Card Strip) */
+.briefing-status-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.status-strip-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 12px;
+  min-height: 48px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.status-strip-card.is-pending {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.04);
+}
+
+.status-strip-card.is-ok {
+  border-left: 3px solid #22c55e;
+}
+
+.status-strip-card.weather-card.weather-dry { border-left: 3px solid #fbbf24; }
+.status-strip-card.weather-card.weather-rain { border-left: 3px solid #60a5fa; }
+.status-strip-card.weather-card.weather-hot { border-left: 3px solid #f97316; }
+
+.status-strip-card.outs-card {
+  border-left: 3px solid rgba(255, 255, 255, 0.2);
+}
+
+.strip-card-icon {
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.strip-card-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.strip-card-title {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.strip-card-desc {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.strip-card-link {
+  font-size: 0.72rem;
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 700;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.strip-card-link:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.strip-card-tags {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.strip-tag {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+/* Grid de Inteligência Tática e Preleção (2 Colunas Equilibradas) */
+.briefing-intel-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: start;
+  margin-bottom: 12px;
+}
+
+.scouting-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.briefing-addon-advice {
+  background: rgba(56, 189, 248, 0.05);
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.8rem;
+}
+
+.addon-advice-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.addon-advice-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #38bdf8;
+}
+
+.addon-advice-setup {
+  font-size: 0.8rem;
+  color: var(--fg);
+}
+
+.addon-advice-weakness {
+  font-size: 0.78rem;
+  color: #fcd34d;
+  margin: 3px 0;
+}
+
+.weakness-chip {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+.addon-advice-notes {
+  font-size: 0.74rem;
+  margin: 2px 0 0;
+}
+
+/* Otimizações compactas no Dossiê e Preleção dentro da tela de pré-jogo */
+.briefing .dossier-card {
+  padding: 12px 14px;
+  gap: 8px;
+}
+
+.briefing .dossier-card .dossier-header {
+  padding-bottom: 6px;
+}
+
+.briefing .dossier-card .dossier-title {
+  font-size: 1.02rem;
+}
+
+.briefing .dossier-card .dossier-subtitle {
+  display: none;
+}
+
+.briefing .dossier-card .dossier-panel {
+  padding: 6px 10px;
+}
+
+.briefing .dossier-card .dossier-threat-item,
+.briefing .dossier-card .dossier-counter-item {
+  padding: 6px 8px;
+}
+
+.briefing .dossier-footer-actions {
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.briefing .team-talk-card {
+  padding: 12px 14px;
+}
+
+.briefing .team-talk-card .team-talk-card-header {
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+}
+
+.briefing .team-talk-card .team-talk-title {
+  font-size: 1.02rem;
+}
+
+.briefing .team-talk-card .team-talk-subtitle {
+  display: none;
 }
 
 .briefing-read-head {
@@ -14544,10 +14988,6 @@ li.round-ticker-row-mine .round-ticker-score {
   flex-wrap: wrap;
 }
 
-/*
-  O grau de certeza é parte do relatório, não enfeite: um parecer que nunca admite dúvida é um parecer
-  que o técnico não consegue pesar. Auxiliar fraco erra mais e diz que está chutando.
-*/
 .briefing-confidence {
   font-size: 0.68rem;
   font-weight: 800;
@@ -14574,18 +15014,28 @@ li.round-ticker-row-mine .round-ticker-score {
 }
 
 .briefing-read-summary {
-  font-size: 0.95rem;
+  font-size: 0.92rem;
   margin: 0 0 8px;
 }
 
 .briefing-read-weakness {
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   color: var(--accent);
   margin: 0 0 8px;
 }
 
+.briefing-weakness-tag {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  margin-right: 6px;
+}
+
 .briefing-read-detail {
-  font-size: 0.87rem;
+  font-size: 0.85rem;
   color: var(--fg);
   border-left: 2px solid var(--accent);
   padding-left: 10px;
@@ -14596,11 +15046,11 @@ li.round-ticker-row-mine .round-ticker-score {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 9px 12px;
-  border-radius: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
   background: #14121580;
   border: 1px solid rgba(255, 255, 255, 0.07);
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .briefing-rec-label {
@@ -14612,86 +15062,69 @@ li.round-ticker-row-mine .round-ticker-score {
 
 .briefing-rec-values {
   font-family: var(--font-display);
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   letter-spacing: 0.03em;
   color: var(--fg);
 }
 
 .briefing-read-notes,
 .briefing-read-specialty {
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: var(--muted);
   margin: 0;
 }
 
 .briefing-read-specialty {
-  margin-top: 6px;
+  margin-top: 4px;
   color: #7ddba1;
 }
 
-/* Uma saída só: entrar em campo. */
-.briefing-actions {
+.briefing-footer-actions {
   display: flex;
-  gap: 12px;
-  align-items: stretch;
-  flex-wrap: wrap;
-  margin-top: 20px;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
 }
 
-.briefing-kickoff {
-  flex: 1 1 260px;
-  padding: 17px 24px;
-  border: none;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #d4af37 0%, #a8842a 100%);
-  color: #14110c;
-  font-family: var(--font-display);
-  font-size: 1.3rem;
-  letter-spacing: 0.05em;
+.briefing-kickoff-footer {
+  padding: 8px 18px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.2);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fcd34d;
+  font-weight: 700;
+  font-size: 0.85rem;
   cursor: pointer;
-  transition: filter 0.15s, transform 0.15s;
+  transition: all 0.15s ease;
 }
 
-.briefing-kickoff:hover:not(:disabled) {
-  filter: brightness(1.1);
-  transform: translateY(-1px);
+.briefing-kickoff-footer:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.35);
+  border-color: #f59e0b;
 }
 
-.briefing-kickoff:disabled {
-  opacity: 0.45;
+.briefing-kickoff-footer:disabled {
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
-.briefing-autofill {
-  flex: 0 1 auto;
-  padding: 17px 20px;
-}
-
-@media (max-width: 640px) {
+@media (max-width: 860px) {
   .briefing-matchup {
-    gap: 8px;
+    grid-template-columns: 1fr;
+    gap: 12px;
   }
-
-  .briefing-side-name {
-    font-size: 1rem;
+  .briefing-status-strip {
+    grid-template-columns: 1fr;
   }
-
-  .briefing-actions {
-    flex-direction: column-reverse;
+  .briefing-intel-grid {
+    grid-template-columns: 1fr;
   }
-
-  .briefing-autofill {
+  .briefing-center-action {
+    order: 2;
     width: 100%;
+    max-width: none;
   }
 }
-
-/* As condições da partida, na preleção. A borda muda com o tempo; o resto do card não. */
-.briefing-conditions {
-  border-left: 3px solid var(--cond, rgba(255, 255, 255, 0.12));
-}
-
-.briefing-conditions.weather-dry { --cond: rgba(255, 255, 255, 0.14); }
-.briefing-conditions.weather-rain { --cond: #6fa8dc99; }
 .briefing-conditions.weather-hot { --cond: #dfa23a99; }
 
 .briefing-conditions-label {

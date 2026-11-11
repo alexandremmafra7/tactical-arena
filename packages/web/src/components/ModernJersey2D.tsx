@@ -7,6 +7,7 @@ import {
   JERSEY_SEAMS,
   resolveJerseyZonesLayout,
   getSponsorLogoUrl,
+  resolveClubKit,
 } from '@tactical-arena/shared';
 import { ClubCrest } from './ClubCrest.js';
 
@@ -103,9 +104,9 @@ export function getKitSupplierJerseyAsset(supplierName: string): string {
  * Renderizador baseado em camadas SVG com zonas calibradas e costuras dinâmicas.
  */
 export function ModernJersey2D({
-  primaryColor = '#1e293b',
-  secondaryColor = '#ffffff',
-  kitPattern = 'SOLID',
+  primaryColor,
+  secondaryColor,
+  kitPattern,
   size = 180,
   className = '',
   style,
@@ -122,6 +123,9 @@ export function ModernJersey2D({
   optionalSponsorLogoUrl,
   showOptionalSponsor = false,
   isAway = false,
+  awayPrimaryColor,
+  awaySecondaryColor,
+  awayKitPattern,
 }: ModernJersey2DProps) {
   const reactId = useId().replace(/:/g, '_');
 
@@ -138,27 +142,38 @@ export function ModernJersey2D({
     return false;
   }, [debug]);
 
-  // Cores dinâmicas para Away
-  const basePrimary = primaryColor || '#1e293b';
-  const baseSecondary = secondaryColor || '#ffffff';
+  // Resolve o kit completo através da base canônica oficial ou customizações do clube
+  const resolvedKit = useMemo(() => {
+    return resolveClubKit({
+      slug: club?.slug,
+      name: club?.name,
+      primaryColor: primaryColor ?? club?.primaryColor,
+      secondaryColor: secondaryColor ?? club?.secondaryColor,
+      kitPattern: kitPattern ?? (club as any)?.kitPattern,
+      awayPrimaryColor: awayPrimaryColor ?? (club as any)?.awayPrimaryColor,
+      awaySecondaryColor: awaySecondaryColor ?? (club as any)?.awaySecondaryColor,
+      awayKitPattern: awayKitPattern ?? (club as any)?.awayKitPattern,
+    });
+  }, [club, primaryColor, secondaryColor, kitPattern, awayPrimaryColor, awaySecondaryColor, awayKitPattern]);
+
+  // Cores dinâmicas para Home e Away
+  const basePrimary = isAway ? resolvedKit.awayPrimaryColor : resolvedKit.primaryColor;
+  const baseSecondary = isAway ? resolvedKit.awaySecondaryColor : resolvedKit.secondaryColor;
+  const activePattern = isAway ? resolvedKit.awayKitPattern : resolvedKit.kitPattern;
 
   let activePrimary = basePrimary;
   let activeSecondary = baseSecondary;
-  let activePattern = kitPattern || 'SOLID';
 
-  if (isAway) {
-    const lum1 = getLuminance(basePrimary);
-    const lum2 = getLuminance(baseSecondary);
+  if (isAway && !awayPrimaryColor && !awayKitPattern && !(club as any)?.awayPrimaryColor) {
+    const lum1 = getLuminance(resolvedKit.primaryColor);
+    const lum2 = getLuminance(resolvedKit.secondaryColor);
 
     if (lum1 < 0.45 && lum2 < 0.45) {
       activePrimary = '#f8fafc';
-      activeSecondary = basePrimary;
+      activeSecondary = resolvedKit.primaryColor;
     } else if (lum1 >= 0.7) {
-      activePrimary = lum2 < 0.45 ? baseSecondary : '#0f172a';
-      activeSecondary = basePrimary;
-    } else {
-      activePrimary = baseSecondary;
-      activeSecondary = basePrimary;
+      activePrimary = lum2 < 0.45 ? resolvedKit.secondaryColor : '#0f172a';
+      activeSecondary = resolvedKit.primaryColor;
     }
   }
 
@@ -237,9 +252,9 @@ export function ModernJersey2D({
             <rect x="12" width="12" height="200" fill={activeSecondary} />
           </pattern>
 
-          <pattern id={patternHorizId} width="200" height="24" patternUnits="userSpaceOnUse">
-            <rect width="200" height="12" fill={activePrimary} />
-            <rect y="12" width="200" height="12" fill={activeSecondary} />
+          <pattern id={patternHorizId} width="200" height="28" patternUnits="userSpaceOnUse">
+            <rect width="200" height="14" fill={activePrimary} />
+            <rect y="14" width="200" height="14" fill={activeSecondary} />
           </pattern>
 
           <linearGradient id={patternSashId} x1="0" y1="0" x2="1" y2="1">

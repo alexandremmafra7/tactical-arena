@@ -100,7 +100,7 @@ function readPlayerRow(cells: string[]): RawPlayer | null {
 }
 
 /** How many of a squad's players are kept. Enough for a first team, a bench and some rotation. */
-const SQUAD_LIMIT = 16;
+const SQUAD_LIMIT = 32;
 
 /**
  * Turns a country's real clubs into the two divisions the game plays.
@@ -146,19 +146,54 @@ export function buildCountry(
         name: row[1],
         country,
         stadiumCapacity: Number(row[4]) || 20_000,
-        players: generateSquad(Math.round(average), row[0], country),
+        players: generateSquad(Math.round(average), row[0], country).map((player) => {
+          Object.defineProperty(player, 'detailedAttributes', {
+            value: player.detailedAttributes,
+            enumerable: false,
+            writable: true,
+            configurable: true,
+          });
+          return player;
+        }),
         state,
       };
     }
 
-    const squad = listado.slice(0, SQUAD_LIMIT);
+    // Prioriza manter goleiros no elenco para garantir que nenhum time fique sem goleiro
+    const gks = listado.filter((p) => p.position === 'GK');
+    const outfield = listado.filter((p) => p.position !== 'GK');
+    const selectedGks = [...gks.slice(0, 4)];
+    if (selectedGks.length === 0) {
+      selectedGks.push(
+        {
+          name: 'Goleiro Titular',
+          position: 'GK',
+          age: 26,
+          rating: Math.round(average),
+          nationality: country,
+          starLevel: 'NONE',
+          diferenciado: false,
+        },
+        {
+          name: 'Goleiro Reserva',
+          position: 'GK',
+          age: 22,
+          rating: Math.max(50, Math.round(average - 4)),
+          nationality: country,
+          starLevel: 'NONE',
+          diferenciado: false,
+        },
+      );
+    }
+    const maxOutfield = Math.max(0, SQUAD_LIMIT - selectedGks.length);
+    const squad = [...selectedGks, ...outfield.slice(0, maxOutfield)];
     return {
       slug: row[0],
       name: row[1],
       country,
       stadiumCapacity: Number(row[4]) || 20_000,
-      players: squad.map((p, index) =>
-        buildPlayerFromRating(
+      players: squad.map((p, index) => {
+        const player = buildPlayerFromRating(
           {
             id: `${row[0]}-p${index}`,
             name: p.name,
@@ -170,8 +205,15 @@ export function buildCountry(
             diferenciado: p.diferenciado ?? false,
           },
           rng,
-        ),
-      ),
+        );
+        Object.defineProperty(player, 'detailedAttributes', {
+          value: player.detailedAttributes,
+          enumerable: false,
+          writable: true,
+          configurable: true,
+        });
+        return player;
+      }),
       state,
     };
   };
@@ -240,7 +282,7 @@ export async function loadOfflineContent(): Promise<OfflineContent | null> {
       if (!player || !cells[0]) continue;
       const list = squads.get(cells[0]) ?? [];
       // Only the first few matter, and stopping early saves parsing 51.585 rows into objects nobody reads.
-      if (list.length < SQUAD_LIMIT) list.push(player);
+      if (list.length < 35) list.push(player);
       squads.set(cells[0], list);
     }
 

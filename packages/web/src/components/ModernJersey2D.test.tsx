@@ -114,4 +114,25 @@ describe('ModernJersey2D Component', () => {
     expect(html).toContain('pattern_sash_');
     expect(html).toContain('apex-athletics');
   });
+
+  it('8. Resolve automaticamente cores oficiais (#c8102e, #111111) e listras horizontais para o Flamengo', () => {
+    const htmlHome = renderToStaticMarkup(
+      <ModernJersey2D
+        club={{ id: 'fla-1', name: 'Flamengo', slug: 'flamengo' }}
+        size={140}
+      />
+    );
+    expect(htmlHome).toContain('pattern_horiz_');
+    expect(htmlHome).toContain('fill="#c8102e"');
+    expect(htmlHome).toContain('fill="#111111"');
+
+    const htmlAway = renderToStaticMarkup(
+      <ModernJersey2D
+        club={{ id: 'fla-1', name: 'Flamengo', slug: 'flamengo' }}
+        isAway={true}
+        size={140}
+      />
+    );
+    expect(htmlAway).toContain('fill="#f8fafc"');
+  });
 });

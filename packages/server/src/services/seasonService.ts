@@ -143,7 +143,7 @@ async function renewLeagues(
 
     const id = randomUUID();
     const fixtures: LeagueFixture[] = await scheduleLeagueFixtures(
-      generateDoubleRoundRobinFixtures(clubIds),
+      generateDoubleRoundRobinFixtures(clubIds, randomUUID()),
       newSeason,
       id,
       clubIds,

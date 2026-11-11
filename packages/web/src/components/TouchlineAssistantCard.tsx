@@ -71,9 +71,13 @@ export function findBestSubstitute(
     return samePosition[0];
   }
 
-  // 2. Fallback: melhor jogador geral do banco
-  availableBench.sort((a, b) => b.overall - a.overall || (a.fatigue ?? 0) - (b.fatigue ?? 0));
-  return availableBench[0];
+  // 2. Fallback: melhor jogador do banco (NUNCA goleiro se o substituído for jogador de linha)
+  const outfieldBench = targetPlayer.position === 'GK'
+    ? availableBench
+    : availableBench.filter((p) => p.position !== 'GK');
+  const pool = outfieldBench.length > 0 ? outfieldBench : availableBench;
+  pool.sort((a, b) => b.overall - a.overall || (a.fatigue ?? 0) - (b.fatigue ?? 0));
+  return pool[0] ?? null;
 }
 
 /**

@@ -14,6 +14,7 @@
     "test:shared": "npm run test -w packages/shared",
     "dev:server": "npm run dev -w packages/server",
     "dev:web": "npm run dev -w packages/web",
+    "start:hosted": "powershell -ExecutionPolicy Bypass -File ./start-online-server.ps1",
     "test:server": "npm run test -w packages/server",
     "dev:desktop": "npm run dev -w packages/desktop",
     "build:desktop": "npm run build:shared && npm run build -w packages/web && npm run build -w packages/desktop",

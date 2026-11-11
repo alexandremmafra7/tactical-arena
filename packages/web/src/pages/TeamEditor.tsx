@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { COUNTRIES } from '@tactical-arena/shared';
 import type { Club, KitPattern, ModPack, Player, PlayerAttributes, Position, PreferredFoot } from '@tactical-arena/shared';
 import {
@@ -154,6 +155,7 @@ function PlayerRow({ player, onChange, onDelete }: PlayerRowProps) {
 const DEFAULT_NEW_PLAYER_ATTRIBUTES: PlayerAttributes = { pace: 50, finishing: 50, passing: 50, defending: 50, physical: 50, goalkeeping: 10 };
 
 export function TeamEditorPage() {
+  const navigate = useNavigate();
   const [clubs, setClubs] = useState<Club[]>([]);
   const [selectedClubId, setSelectedClubId] = useState('');
   const [search, setSearch] = useState('');
@@ -215,6 +217,24 @@ export function TeamEditorPage() {
   useEffect(() => {
     refresh();
   }, []);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        const target = e.target as HTMLElement | null;
+        const isInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT');
+        if (!isInput && !confirmModal.isOpen) {
+          if (window.history.length > 1) {
+            navigate(-1);
+          } else {
+            navigate('/');
+          }
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [confirmModal.isOpen, navigate]);
 
   const selectedClub = clubs.find((c) => c.id === selectedClubId) ?? null;
   const filteredClubs = clubs.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()));
@@ -425,14 +445,76 @@ export function TeamEditorPage() {
     }
   }
 
-  if (loading) return <div className="page">Carregando...</div>;
+  if (loading) {
+    return (
+      <div className="page">
+        <header className="topbar" style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h1 style={{ margin: 0 }}>Modding Suite & Editor In-Game</h1>
+          <div className="topbar-actions">
+            <Link className="btn-secondary" to="/" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none' }}>
+              ← Voltar ao Menu
+            </Link>
+          </div>
+        </header>
+        <div className="card" style={{ padding: 24, textAlign: 'center' }}>Carregando dados do editor...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="page">
-      <h1>Modding Suite & Editor In-Game</h1>
-      <p className="muted">
-        Ferramenta profissional de modding e customização: altere elencos, projete uniformes (Kit Designer SVG), gerencie estádios, finanças e pacotes da comunidade.
-      </p>
+      <header className="topbar" style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
+        <div>
+          <h1 style={{ margin: 0 }}>Modding Suite & Editor In-Game</h1>
+          <p className="muted" style={{ margin: '6px 0 0 0' }}>
+            Ferramenta profissional de modding e customização: altere elencos, projete uniformes (Kit Designer SVG), gerencie estádios, finanças e pacotes da comunidade.
+          </p>
+        </div>
+        <div className="topbar-actions" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              if (window.history.length > 1) {
+                navigate(-1);
+              } else {
+                navigate('/');
+              }
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '8px 16px',
+              fontSize: '0.92rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              borderRadius: 8,
+            }}
+            title="Voltar à tela anterior (ou pressione Esc)"
+          >
+            ← Voltar
+          </button>
+          <Link
+            className="btn-secondary"
+            to="/"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '8px 16px',
+              fontSize: '0.92rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              textDecoration: 'none',
+              borderRadius: 8,
+            }}
+            title="Ir para o Menu Principal"
+          >
+            🏠 Menu Principal
+          </Link>
+        </div>
+      </header>
 
       {error && <p className="error">{error}</p>}
       {feedback && <p className="muted" style={{ color: '#4ade80' }}>{feedback}</p>}

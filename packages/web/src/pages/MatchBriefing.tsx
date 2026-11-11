@@ -224,154 +224,236 @@ export function MatchBriefingPage() {
 
       <section className="briefing-header">
         <div className="briefing-comp">
-          {logo && <img src={logo} alt="" className="briefing-comp-logo" />}
-          <div>
-            <span className="briefing-comp-name">{entry.competitionName}</span>
-            <span className="briefing-comp-round">
-              {rodada}
-              {entry.date ? ` • ${formatShortPtBr(entry.date)}` : ''}
-              {' • '}
-              {entry.isHome ? 'em casa' : 'fora de casa'}
-            </span>
+          <div className="briefing-comp-left">
+            {logo && <img src={logo} alt="" className="briefing-comp-logo" />}
+            <div className="briefing-comp-info">
+              <span className="briefing-comp-name">{entry.competitionName}</span>
+              <span className="briefing-comp-round">
+                {rodada}
+                {entry.date ? ` • ${formatShortPtBr(entry.date)}` : ''}
+                {' • '}
+                {entry.isHome ? 'em casa' : 'fora de casa'}
+              </span>
+            </div>
+          </div>
+          <div className="briefing-comp-right">
+            {escalado ? (
+              <span className="header-status-badge ok">✓ Escalação Pronta</span>
+            ) : (
+              <span className="header-status-badge pendente">⚠️ {starters}/11 Titulares</span>
+            )}
           </div>
         </div>
 
         <div className="briefing-matchup">
-          <BriefingSide club={entry.isHome ? club : opponent} fallbackName={entry.isHome ? club.name : entry.opponentName} position={entry.isHome ? minhaPos : posDeles} form={entry.isHome ? myForm : theirForm} />
-          <span className="briefing-vs">VS</span>
-          <BriefingSide club={entry.isHome ? opponent : club} fallbackName={entry.isHome ? entry.opponentName : club.name} position={entry.isHome ? posDeles : minhaPos} form={entry.isHome ? theirForm : myForm} />
-        </div>
-      </section>
+          <BriefingSide
+            club={entry.isHome ? club : opponent}
+            fallbackName={entry.isHome ? club.name : entry.opponentName}
+            position={entry.isHome ? minhaPos : posDeles}
+            form={entry.isHome ? myForm : theirForm}
+          />
 
-      <div className="briefing-grid">
-        <section className={`card briefing-lineup${escalado ? '' : ' pendente'}`}>
-          <h3>Escalação</h3>
-          {escalado ? (
-            <>
-              <p className="briefing-lineup-state ok">
-                ✓ Time escalado em <strong>{club.pendingRoundTactic?.formation ?? '4-4-2'}</strong>
-              </p>
-              <p className="muted">
-                O plano vale para esta partida e para as próximas, até você mudar.
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="briefing-lineup-state pendente" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <AlertTriangleIcon size={14} color="#f59e0b" /> {starters} de 11 titulares definidos
-              </p>
-              <p className="muted">
-                Sem os onze não dá para entrar em campo. Escolha na prancheta ou deixe o auxiliar montar o
-                time mais forte disponível.
-              </p>
-            </>
-          )}
-          <p className="home-link">
-            <Link className="btn-secondary" to={`/clubs/${club.id}/tactics`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <TacticsIcon size={15} color="currentColor" /> {escalado ? 'Ajustar na prancheta' : 'Montar na prancheta'}
-            </Link>
-          </p>
-        </section>
+          <div className="briefing-center-action">
+            <div className="briefing-vs-badge">VS</div>
 
-        <section className={`card briefing-conditions weather-${weather.toLowerCase()}`}>
-          <h3>Condições</h3>
-          <p className="briefing-conditions-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            {weather === 'DRY' && <SunIcon size={16} color="#fbbf24" />}
-            {weather === 'RAIN' && <CloudRainIcon size={16} color="#60a5fa" />}
-            {weather === 'HOT' && <FlameIcon size={16} color="#f97316" />}
-            <span>{WEATHER_LABEL[weather]}</span>
-          </p>
-          <p className="muted">{WEATHER_NOTE[weather]}</p>
-        </section>
+            <button
+              type="button"
+              className="briefing-hero-kickoff"
+              onClick={entrarEmCampo}
+              disabled={busy || !escalado}
+              title={escalado ? 'Iniciar partida' : 'Defina os 11 titulares para entrar em campo'}
+            >
+              <span className="kickoff-hero-icon">⚽</span>
+              <span className="kickoff-hero-label">
+                {busy ? 'INDO PARA O CAMPO...' : 'ENTRAR EM CAMPO'}
+              </span>
+              <span className="kickoff-hero-sub">({rodada})</span>
+            </button>
 
-        <section className="card">
-          <h3>Quem não joga</h3>
-          <div className="briefing-outs">
-            <div>
-              <span className="briefing-outs-club">{club.name}</span>
-              <ListaDesfalques jogadores={meusDesfalques} />
-            </div>
-            <div>
-              <span className="briefing-outs-club">{opponent?.name ?? entry.opponentName}</span>
-              {opponent ? (
-                <ListaDesfalques jogadores={desfalquesDeles} />
-              ) : (
-                <p className="muted">Sem informação do elenco adversário.</p>
+            <div className="briefing-hero-actions">
+              <Link
+                className={`btn-briefing-quick ${escalado ? '' : 'urgent'}`}
+                to={`/clubs/${club.id}/tactics`}
+                title={escalado ? 'Ajustar titulares, banco e instruções' : 'Defina os 11 titulares para jogar'}
+              >
+                <TacticsIcon size={14} />
+                <span>{escalado ? `Tática (${club.pendingRoundTactic?.formation ?? '4-4-2'})` : 'Montar Tática'}</span>
+              </Link>
+
+              <button
+                type="button"
+                className="btn-briefing-quick btn-quick-assistant"
+                onClick={aplicarContraEstrategia}
+                disabled={busy}
+                title="Auxiliar ajusta escalação e contra-estratégia para enfrentar este adversário"
+              >
+                <span>⚡ Contra-Estratégia</span>
+              </button>
+
+              {!escalado && (
+                <button
+                  type="button"
+                  className="btn-briefing-quick btn-quick-autofill"
+                  onClick={escalarEEntrar}
+                  disabled={busy}
+                  title="Escala os 11 melhores automaticamente e entra na partida"
+                >
+                  <span>⚡ Escalar e Entrar</span>
+                </button>
               )}
             </div>
           </div>
-        </section>
 
-        {dossier && <OppositionDossierCard dossier={dossier} onApplyCountermeasures={aplicarContraEstrategia} />}
+          <BriefingSide
+            club={entry.isHome ? opponent : club}
+            fallbackName={entry.isHome ? entry.opponentName : club.name}
+            position={entry.isHome ? posDeles : minhaPos}
+            form={entry.isHome ? theirForm : myForm}
+          />
+        </div>
+      </section>
 
-        {advice && (
-          <section className="card briefing-read">
-            {successMsg && <div className="briefing-success-toast">{successMsg}</div>}
-            <div className="briefing-read-head">
-              <h3>Leitura do auxiliar</h3>
-              <span className={`briefing-confidence ${confidenceClass(advice.confidence)}`}>
-                {advice.confidenceLabel}
-              </span>
+      {successMsg && <div className="briefing-success-toast">{successMsg}</div>}
+
+      {/* Faixa compacta de status de pré-jogo (3 cards reduzidos em 1 única linha) */}
+      <div className="briefing-status-strip">
+        <div className={`status-strip-card ${escalado ? 'is-ok' : 'is-pending'}`}>
+          <div className="strip-card-icon">
+            <TacticsIcon size={16} />
+          </div>
+          <div className="strip-card-body">
+            <span className="strip-card-title">Escalação</span>
+            <span className="strip-card-desc">
+              {escalado ? `✓ Escalado em ${club.pendingRoundTactic?.formation ?? '4-4-2'}` : `⚠️ ${starters}/11 titulares definidos`}
+            </span>
+          </div>
+          <Link to={`/clubs/${club.id}/tactics`} className="strip-card-link">
+            {escalado ? 'Prancheta →' : 'Escalar →'}
+          </Link>
+        </div>
+
+        <div className={`status-strip-card weather-card weather-${weather.toLowerCase()}`}>
+          <div className="strip-card-icon">
+            {weather === 'DRY' && <SunIcon size={16} color="#fbbf24" />}
+            {weather === 'RAIN' && <CloudRainIcon size={16} color="#60a5fa" />}
+            {weather === 'HOT' && <FlameIcon size={16} color="#f97316" />}
+          </div>
+          <div className="strip-card-body">
+            <span className="strip-card-title">Condições: {WEATHER_LABEL[weather]}</span>
+            <span className="strip-card-desc" title={WEATHER_NOTE[weather]}>
+              {WEATHER_NOTE[weather]}
+            </span>
+          </div>
+        </div>
+
+        <div className="status-strip-card outs-card">
+          <div className="strip-card-icon">🏥</div>
+          <div className="strip-card-body">
+            <span className="strip-card-title">Quem não joga</span>
+            <span className="strip-card-desc">
+              {meusDesfalques.length === 0 && desfalquesDeles.length === 0
+                ? 'Ambos os elencos 100% completos'
+                : `${meusDesfalques.length} fora no ${club.name} • ${desfalquesDeles.length} no ${opponent?.name ?? 'rival'}`}
+            </span>
+          </div>
+          {(meusDesfalques.length > 0 || desfalquesDeles.length > 0) && (
+            <div className="strip-card-tags">
+              {meusDesfalques.slice(0, 2).map((d) => (
+                <span key={d.player.id} className="strip-tag" title={`${d.player.name}: ${d.motivo}`}>
+                  {d.player.name.split(' ')[0]}
+                </span>
+              ))}
+              {meusDesfalques.length > 2 && <span className="strip-tag">+{meusDesfalques.length - 2}</span>}
             </div>
-
-            <p className="briefing-read-summary">{advice.opponentSummary}</p>
-            <p className="briefing-read-weakness">
-              <span className="briefing-weakness-tag" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', padding: '1px 6px', borderRadius: 4, fontSize: '0.75rem', fontWeight: 700, marginRight: 6 }}>Ponto Fraco</span>
-              {advice.keyWeakness}
-            </p>
-            {advice.detail && <p className="briefing-read-detail">{advice.detail}</p>}
-
-            <div className="briefing-recommendation">
-              <span className="briefing-rec-label">Ele montaria assim</span>
-              <span className="briefing-rec-values">
-                {advice.recommendedFormation} · {advice.recommendedMentality} · {advice.recommendedPressing}
-              </span>
-            </div>
-
-            <p className="briefing-read-notes">{advice.assistantNotes}</p>
-            {advice.withinSpecialty && (
-              <p className="briefing-read-specialty">Este é o tipo de jogo que ele lê melhor.</p>
-            )}
-
-            <div className="briefing-read-actions">
-              <button
-                type="button"
-                className="btn-briefing-assistant"
-                onClick={aplicarContraEstrategia}
-                disabled={busy}
-              >
-                {busy ? 'Aplicando...' : 'Aplicar Contra-Estratégia'}
-              </button>
-              <Link
-                to={`/clubs/${club.id}/tactics`}
-                className="btn-briefing-tactics"
-              >
-                Ajustar na Prancheta Tática
-              </Link>
-            </div>
-          </section>
-        )}
-
-        <TeamTalkCard
-          clubId={club.id}
-          context="PRE_MATCH"
-          scoreDifferential={0}
-          isDerbyOrFinal={Boolean(entry.stageName && (entry.stageName.includes('Final') || entry.stageName.includes('Decisão')))}
-          onApplied={() => {
-            setTeamTalkApplied(true);
-            getClub(club.id).then(setClub).catch(() => {});
-          }}
-        />
+          )}
+        </div>
       </div>
 
-      <div className="briefing-actions">
+      {/* Grid de inteligência de 2 colunas equilibradas (Espionagem + Preleção) */}
+      <div className="briefing-intel-grid">
+        <div className="intel-col-scouting">
+          {dossier ? (
+            <div className="scouting-wrapper">
+              <OppositionDossierCard dossier={dossier} onApplyCountermeasures={aplicarContraEstrategia} />
+              {advice && (
+                <div className="briefing-addon-advice">
+                  <div className="addon-advice-head">
+                    <span className="addon-advice-badge">Leitura do Auxiliar ({advice.confidenceLabel})</span>
+                    <span className="addon-advice-setup">
+                      Sugerido: <strong>{advice.recommendedFormation}</strong> · {advice.recommendedMentality} · {advice.recommendedPressing}
+                    </span>
+                  </div>
+                  {advice.keyWeakness && (
+                    <p className="addon-advice-weakness">
+                      <span className="weakness-chip">Ponto Fraco</span> {advice.keyWeakness}
+                    </p>
+                  )}
+                  {advice.assistantNotes && (
+                    <p className="addon-advice-notes muted">{advice.assistantNotes}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : advice ? (
+            <section className="card briefing-read">
+              <div className="briefing-read-head">
+                <h3>Leitura do auxiliar</h3>
+                <span className={`briefing-confidence ${confidenceClass(advice.confidence)}`}>
+                  {advice.confidenceLabel}
+                </span>
+              </div>
+              <p className="briefing-read-summary">{advice.opponentSummary}</p>
+              <p className="briefing-read-weakness">
+                <span className="briefing-weakness-tag">Ponto Fraco</span>
+                {advice.keyWeakness}
+              </p>
+              <div className="briefing-recommendation">
+                <span className="briefing-rec-label">Ele montaria assim</span>
+                <span className="briefing-rec-values">
+                  {advice.recommendedFormation} · {advice.recommendedMentality} · {advice.recommendedPressing}
+                </span>
+              </div>
+              <p className="briefing-read-notes">{advice.assistantNotes}</p>
+              <div className="briefing-read-actions">
+                <button
+                  type="button"
+                  className="btn-briefing-assistant"
+                  onClick={aplicarContraEstrategia}
+                  disabled={busy}
+                >
+                  {busy ? 'Aplicando...' : 'Aplicar Contra-Estratégia'}
+                </button>
+              </div>
+            </section>
+          ) : (
+            <div className="card muted" style={{ padding: 20, textAlign: 'center' }}>
+              Sem relatório tático do adversário disponível.
+            </div>
+          )}
+        </div>
+
+        <div className="intel-col-talk">
+          <TeamTalkCard
+            clubId={club.id}
+            context="PRE_MATCH"
+            scoreDifferential={0}
+            isDerbyOrFinal={Boolean(entry.stageName && (entry.stageName.includes('Final') || entry.stageName.includes('Decisão')))}
+            onApplied={() => {
+              setTeamTalkApplied(true);
+              getClub(club.id).then(setClub).catch(() => {});
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="briefing-footer-actions">
         {!escalado && (
           <button type="button" className="btn-secondary briefing-autofill" onClick={escalarEEntrar} disabled={busy}>
             Escalar os melhores e entrar
           </button>
         )}
-        <button type="button" className="briefing-kickoff" onClick={entrarEmCampo} disabled={busy || !escalado}>
-          {busy ? 'Indo para o campo...' : `ENTRAR EM CAMPO (${rodada})`}
+        <button type="button" className="briefing-kickoff-footer" onClick={entrarEmCampo} disabled={busy || !escalado}>
+          {busy ? 'Indo para o campo...' : `ENTRAR EM CAMPO (${rodada}) →`}
         </button>
       </div>
     </div>

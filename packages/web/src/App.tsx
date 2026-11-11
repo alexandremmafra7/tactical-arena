@@ -99,11 +99,7 @@ export function App() {
         />
         <Route
           path="/online"
-          element={
-            <RequireAuth>
-              <OnlineMultiplayerPage />
-            </RequireAuth>
-          }
+          element={<OnlineMultiplayerPage />}
         />
         <Route
           path="/match/:matchId/live"

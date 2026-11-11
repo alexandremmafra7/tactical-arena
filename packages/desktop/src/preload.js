@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webFrame } from 'electron';
+const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 /** The surface the renderer gets into the main process for desktop app features
  *  (app info, save backup, quit, fullscreen control, and adaptive zoom). */
@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toggleFullscreen: () => ipcRenderer.invoke('app:toggle-fullscreen'),
   isFullscreen: () => ipcRenderer.invoke('app:is-fullscreen'),
   setFullscreen: (flag) => ipcRenderer.invoke('app:set-fullscreen', flag),
+  startOnlineHost: () => ipcRenderer.invoke('app:start-online-host'),
+  getOnlineHostStatus: () => ipcRenderer.invoke('app:get-online-host-status'),
   onFullscreenChange: (callback) => {
     const subscription = (_event, isFull) => callback(isFull);
     ipcRenderer.on('app:fullscreen-changed', subscription);

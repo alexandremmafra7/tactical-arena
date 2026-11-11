@@ -51,8 +51,8 @@ const CROWD_SHARE = 0.35;
  * really is; the fit had to rest on points share alone. Refitted here on the corrected scale, which diluted
  * the old constants and needed them raised. See scripts/home-check.ts.
  */
-const FULL_ATTACK_BONUS = 0.150;
-const FULL_DEFENSE_BONUS = 0.092;
+const FULL_ATTACK_BONUS = 0.180;
+const FULL_DEFENSE_BONUS = 0.110;
 
 /**
  * How far the referee leans, at full occupancy. Deliberately the smallest of the three: a crowd nudges

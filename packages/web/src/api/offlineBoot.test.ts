@@ -38,7 +38,7 @@ describe('the offline world boots from the shipped files', () => {
      * so Flamengo fielded eleven invented men. These are the real ones, off `players.csv`.
      */
     const fla = state.clubs.find((c) => c.name === 'Flamengo')!;
-    expect(fla.players.length).toBeGreaterThanOrEqual(11);
+    expect(fla.players.length).toBeGreaterThanOrEqual(25);
     expect(fla.sponsorships.length).toBeGreaterThan(0);
     expect(fla.stadiumCapacity).toBeGreaterThan(2_000);
   });
@@ -333,5 +333,54 @@ describe('the offline world boots from the shipped files', () => {
 
     const state = loadLocalGameState();
     expect(state.clubs.find((c) => c.id === selected.id)?.ownerId).toBeTruthy();
+  });
+
+  it('heals truncated 17-player squads from previous builds when loading or listing available clubs', async () => {
+    localStorage.clear();
+    await prepareOfflineWorld();
+
+    // Simulate an old save where Brazilian clubs were sliced to 17 players
+    const state = loadLocalGameState();
+    for (const club of state.clubs) {
+      if (club.country === 'BRA') {
+        club.players = club.players.slice(0, 17);
+      }
+    }
+    // Verify it is truncated
+    expect(state.clubs.find((c) => c.name === 'Flamengo')!.players).toHaveLength(17);
+    localStorage.setItem('tactical_arena_game_state', JSON.stringify(state));
+
+    // Now call localListAvailableClubs or prepareOfflineWorld as when opening the app/wizard
+    const available = await localListAvailableClubs('BRA');
+    const fla = available.find((c) => c.name === 'Flamengo')!;
+    const pal = available.find((c) => c.name === 'Palmeiras')!;
+    const cru = available.find((c) => c.name === 'Cruzeiro')!;
+
+    expect(fla.players.length).toBeGreaterThanOrEqual(25);
+    expect(pal.players.length).toBeGreaterThanOrEqual(25);
+    expect(cru.players.length).toBeGreaterThanOrEqual(25);
+  });
+
+  it('generates distinct calendar draws and save seeds when creating consecutive careers', async () => {
+    // Save 1
+    const res1 = await localCreateNewSave({ name: 'Carreira 1' });
+    const state1 = loadLocalGameState();
+    const bra1 = state1.leagues.find((l) => l.countryCode === 'BRA' && l.division === 1)!;
+    const flaFix1 = bra1.fixtures.find((f) => f.round === 1 && (f.homeClubId === 'club_flamengo' || f.awayClubId === 'club_flamengo'))!;
+
+    // Small delay or distinct seed guaranteed
+    const res2 = await localCreateNewSave({ name: 'Carreira 2' });
+    const state2 = loadLocalGameState();
+    const bra2 = state2.leagues.find((l) => l.countryCode === 'BRA' && l.division === 1)!;
+
+    expect(state1.saveSeed).toBeTruthy();
+    expect(state2.saveSeed).toBeTruthy();
+    expect(state1.saveSeed).not.toBe(state2.saveSeed);
+
+    // Fixture schedules must be drawn differently across the season
+    const fixturesMatchExactOrder = bra1.fixtures.every(
+      (f, idx) => f.homeClubId === bra2.fixtures[idx].homeClubId && f.awayClubId === bra2.fixtures[idx].awayClubId
+    );
+    expect(fixturesMatchExactOrder).toBe(false);
   });
 });
