@@ -36,7 +36,6 @@ const CREST_SLUG_ALIASES: Record<string, string> = {
 export function ClubCrest({ club, size = 22 }: ClubCrestProps) {
   const rawSlug =
     club.slug ||
-    club.id ||
     (club.name
       ? club.name
           .toLowerCase()
@@ -44,7 +43,8 @@ export function ClubCrest({ club, size = 22 }: ClubCrestProps) {
           .replace(/[\u0300-\u036f]/g, '')
           .replace(/[^a-z0-9]/g, '-')
           .replace(/-+/g, '-')
-      : null);
+      : null) ||
+    club.id;
 
   const effectiveSlug = rawSlug ? (CREST_SLUG_ALIASES[rawSlug] ?? rawSlug) : null;
 
