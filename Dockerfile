@@ -2,7 +2,7 @@ FROM node:20-slim AS builder
 
 WORKDIR /app
 
-# Instalar dependências necessárias para compilação nativa (se houver) e openssl para o Prisma
+# Instalar dependências necessárias para compilação nativa e openssl para o Prisma
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl \
     ca-certificates \
@@ -31,6 +31,11 @@ RUN npm run build -w packages/web
 
 # 4. Compilar o servidor backend
 RUN npm run build -w packages/server
+
+# 5. Gerar o banco inicial template.db com schema e clubes reais dentro do build
+ENV DATABASE_URL="file:/app/template.db"
+RUN npx prisma db push --schema=packages/server/prisma/schema.prisma --skip-generate && \
+    npx tsx packages/server/scripts/import-content.ts
 
 # -------------------------------------------------------------
 # Runner Stage (imagem final leve)
@@ -62,9 +67,9 @@ COPY --from=builder /app/packages/server/package.json ./packages/server/package.
 COPY --from=builder /app/packages/server/prisma ./packages/server/prisma
 COPY --from=builder /app/packages/web/dist ./packages/web/dist
 COPY --from=builder /app/content ./content
-COPY --from=builder /app/packages/desktop/resources/template.db /app/data/template.db
+COPY --from=builder /app/template.db /app/data/template.db
 
-# Criar diretório de dados e script de inicialização do banco
+# Criar diretório de dados
 RUN mkdir -p /app/data
 
 EXPOSE 10000
