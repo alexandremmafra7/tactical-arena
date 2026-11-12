@@ -35,6 +35,7 @@ const contentDir = resolveContentDir();
 
 export function createApp() {
   const app = express();
+  app.set('trust proxy', 1);
   validateSecurityConfiguration();
   assertSigningKey();
   app.disable('x-powered-by');

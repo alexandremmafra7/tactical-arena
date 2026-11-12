@@ -40,7 +40,9 @@ export function requestBoundary(req: Request, res: Response, next: NextFunction)
     res.status(403).json({error: 'Serviço local indisponível por este endereço.'}); return;
   }
   const origin = req.get('Origin');
-  const sameOrigin = origin === `${req.protocol}://${req.get('Host')}`;
+  const forwardedProto = (req.get('X-Forwarded-Proto') ?? req.protocol).split(',')[0].trim();
+  const host = req.get('X-Forwarded-Host') ?? req.get('Host');
+  const sameOrigin = origin ? (origin === `${req.protocol}://${req.get('Host')}` || origin === `${forwardedProto}://${host}`) : true;
   if (origin && !sameOrigin && !allowedOrigins().has(origin)) {
     res.status(403).json({error: 'Origem não autorizada.'}); return;
   }
