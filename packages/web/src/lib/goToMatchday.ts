@@ -1,4 +1,4 @@
-import { advanceMatchday, getNextMatch } from '../api/client';
+import { advanceMatchday, fastAdvanceToNextMatch, getNextMatch } from '../api/client';
 
 /**
  * The one answer to "ir para a partida".
@@ -13,8 +13,21 @@ export async function goToMatchday(clubId: string): Promise<string | null> {
     return current.id;
   }
 
-  // Se o próximo jogo do clube for em data futura (ex: pré-temporada ou copas em outras datas),
-  // avançamos pelo calendário até alcançar a partida deste clube, em vez de parar no dia de outro torneio.
+  // 1. Tenta o avanço rápido em lote direto no servidor (1 única requisição HTTP para saltar semanas de pré-temporada)
+  try {
+    const fast = await fastAdvanceToNextMatch(clubId);
+    if (fast.interrupted && fast.interruptionReason?.type === 'BOARD_CRISIS') {
+      window.location.href = `/career`;
+      return null;
+    }
+    if (fast.nextMatch?.matchId) {
+      return fast.nextMatch.matchId;
+    }
+  } catch {
+    // Se o fast-advance falhar por qualquer motivo, segue para o fallback iterativo abaixo
+  }
+
+  // 2. Fallback: avança rodada a rodada pelo calendário
   const MAX_ADVANCES = 30;
   for (let step = 0; step < MAX_ADVANCES; step++) {
     const outcome = await advanceMatchday(clubId);

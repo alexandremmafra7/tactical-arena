@@ -2842,6 +2842,8 @@ export function LiveMatchPage() {
           setDramaticEvent(null);
           if (pauseReason === 'halftime') {
             // Permanece pausado no intervalo para que o botão "INTERVALO (2º TEMPO ➔)" continue visível na barra
+          } else if (match?.live?.pendingDecision?.type === 'redCard') {
+            handleResolveRedCard(null);
           } else if (!match?.live?.pendingDecision) {
             setPauseReason(null);
           }

@@ -1082,14 +1082,23 @@ export async function resolveRedCardDecision(
 
   const tactic = sideTactic(live, decision.side);
   const current = tactic.lineup.map((slot) => slot.playerId);
-  if (lineupPlayerIds.length !== current.length || !sameMultiset(current, lineupPlayerIds)) {
+
+  let finalLineupIds = lineupPlayerIds;
+  if (finalLineupIds.length === current.length - 1 && !finalLineupIds.includes(decision.playerId)) {
+    // O chamador enviou apenas os 10 atletas de linha remanescentes; insere o expulso no slot vago
+    const missingSlotIdx = tactic.lineup.findIndex((slot) => !finalLineupIds.includes(slot.playerId));
+    finalLineupIds = [...finalLineupIds];
+    finalLineupIds.splice(missingSlotIdx >= 0 ? missingSlotIdx : 10, 0, decision.playerId);
+  }
+
+  if (finalLineupIds.length !== current.length || !sameMultiset(current, finalLineupIds)) {
     throw new MatchError('A reorganização precisa usar exatamente os mesmos jogadores, apenas em outras posições');
   }
 
   // Slots keep their own pitch side; only who stands in them moves.
   const reorganized: Tactic = {
     ...tactic,
-    lineup: tactic.lineup.map((slot, i) => ({ ...slot, playerId: lineupPlayerIds[i] })),
+    lineup: tactic.lineup.map((slot, i) => ({ ...slot, playerId: finalLineupIds[i] })),
   };
 
   const updatedLive: LiveMatchState = { ...withSideTactic(live, decision.side, reorganized), pendingDecision: null };

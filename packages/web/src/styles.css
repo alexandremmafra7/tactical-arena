@@ -8713,11 +8713,18 @@ li.round-ticker-row-mine .round-ticker-score {
 .redcard-alert-banner {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
   background: rgba(239, 68, 68, 0.15);
   border: 1.5px solid #ef4444;
   border-radius: 10px;
   padding: 12px 16px;
+}
+
+.redcard-alert-content {
+  flex: 1;
+  min-width: 240px;
 }
 
 .redcard-alert-banner p {
@@ -8726,17 +8733,66 @@ li.round-ticker-row-mine .round-ticker-score {
   line-height: 1.4;
 }
 
+.redcard-banner-quick-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.btn-redcard-banner-quick-resume {
+  background: #22c55e;
+  color: #fff;
+  font-weight: 700;
+  border: 1px solid #16a34a;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-redcard-banner-quick-resume:hover {
+  background: #16a34a;
+  transform: translateY(-1px);
+}
+
+.btn-redcard-banner-quick-maintain {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e2e8f0;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-redcard-banner-quick-maintain:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
 .redcard-pitch-container {
   display: flex;
   justify-content: center;
 }
 
 .redcard-action-dock {
+  position: sticky;
+  bottom: 0;
+  background: rgba(16, 14, 18, 0.95);
+  backdrop-filter: blur(8px);
   display: flex;
   gap: 10px;
   justify-content: flex-end;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 12px 16px;
+  border-radius: 0 0 12px 12px;
+  z-index: 10;
 }
 
 /* Manual & Halftime Tactical Command Center */

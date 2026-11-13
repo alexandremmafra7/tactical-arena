@@ -151,8 +151,34 @@ export function LiveTacticalModal({
     : null;
   const candidates: Player[] = injuryOptions?.candidates ?? [];
 
-  // Red card decision data
-  const sentOffPlayer = isRedCard && redCardDecision ? myClub.players.find((p) => p.id === redCardDecision.playerId) : null;
+  // Red card decision data - busca resiliente no evento, no objeto de decisão e no elenco
+  const redCardEvent = events
+    .slice()
+    .reverse()
+    .find(
+      (e) =>
+        e.type === 'card' &&
+        (e.suspensionMatches !== undefined || (e.description && e.description.toLowerCase().includes('vermelho'))),
+    );
+  const redCardPlayerId = redCardDecision?.playerId ?? redCardEvent?.playerId;
+  const sentOffPlayer = isRedCard
+    ? (redCardPlayerId
+        ? (myClub.players.find((p) => p.id === redCardPlayerId) ??
+          homeClub?.players.find((p) => p.id === redCardPlayerId) ??
+          awayClub?.players.find((p) => p.id === redCardPlayerId))
+        : null) ??
+      (redCardEvent?.description
+        ? (myClub.players.find((p) => redCardEvent.description!.includes(p.name)) ??
+          homeClub?.players.find((p) => redCardEvent.description!.includes(p.name)) ??
+          awayClub?.players.find((p) => redCardEvent.description!.includes(p.name)))
+        : null)
+    : null;
+
+  const sentOffPlayerName =
+    sentOffPlayer?.name ??
+    (redCardEvent?.description
+      ? redCardEvent.description.replace(/^([A-Za-zÀ-ÖØ-öø-ÿ\s]+)(?:recebeu|foi|levou).*$/i, '$1').trim()
+      : 'Jogador');
 
   // Track players who were already substituted OUT (now wearing training vests 🦺 on the bench and cannot return)
   const substitutedOutIds = new Set<string>();
@@ -275,7 +301,7 @@ export function LiveTacticalModal({
               </h2>
               <p className="live-tactical-modal-subtitle">
                 {isInjury && `${injuredPlayer?.name ?? 'Um jogador'} não tem condições de continuar na partida.`}
-                {isRedCard && `${sentOffPlayer?.name ?? 'Um jogador'} foi expulso. Reorganize o posicionamento dos 10 jogadores.`}
+                {isRedCard && `O atleta ${sentOffPlayerName} foi expulso. Reorganize o posicionamento dos 10 jogadores.`}
                 {isHalftime && 'Ajuste a formação, faça substituições táticas e reidrate a equipe para o 2º tempo.'}
                 {isManual && `As alterações táticas e substituições valerão a partir do minuto ${minute + 1}'.`}
               </p>
@@ -292,6 +318,29 @@ export function LiveTacticalModal({
             >
               {busy ? 'Iniciando...' : 'INICIAR 2º TEMPO ➔'}
             </button>
+          ) : isRedCard ? (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                type="button"
+                className="btn-halftime-resume-header"
+                style={{ background: '#22c55e', borderColor: '#16a34a' }}
+                onClick={() => onResolveRedCard && onResolveRedCard(selections.filter((id): id is string => !!id))}
+                disabled={busy}
+                title="Confirmar formação e retomar a partida imediatamente"
+              >
+                {busy ? 'Retomando...' : 'RETOMAR PARTIDA ➔'}
+              </button>
+              <button
+                type="button"
+                className="options-modal-close"
+                onClick={() => onResolveRedCard && onResolveRedCard(null)}
+                aria-label="Continuar sem alterações"
+                title="Continuar sem alterações"
+                disabled={busy}
+              >
+                ✕
+              </button>
+            </div>
           ) : isManual ? (
             <button
               type="button"
@@ -422,11 +471,29 @@ export function LiveTacticalModal({
         {isRedCard && (
           <div className="live-tactical-redcard-body">
             <div className="redcard-alert-banner">
-              
-              <p>
-                <strong>{sentOffPlayer?.name ?? 'Jogador'}</strong> foi expulso. Arraste os jogadores no campo abaixo
-                para posicionar o buraco tático onde for mais conveniente para a sua estratégia.
-              </p>
+              <div className="redcard-alert-content">
+                <p>
+                  <strong>{sentOffPlayerName}</strong> foi expulso de campo. Arraste os atletas no gramado para definir a nova disposição com 10 jogadores, ou clique em continuar para manter o posicionamento.
+                </p>
+              </div>
+              <div className="redcard-banner-quick-actions">
+                <button
+                  type="button"
+                  className="btn-redcard-banner-quick-resume"
+                  onClick={() => onResolveRedCard && onResolveRedCard(selections.filter((id): id is string => !!id))}
+                  disabled={busy}
+                >
+                  {busy ? 'Salvando...' : '✓ Confirmar e Retomar Partida'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-redcard-banner-quick-maintain"
+                  onClick={() => onResolveRedCard && onResolveRedCard(null)}
+                  disabled={busy}
+                >
+                  Manter e Seguir
+                </button>
+              </div>
             </div>
 
             <div className="redcard-pitch-container">
@@ -439,7 +506,7 @@ export function LiveTacticalModal({
                 formation={formation}
                 squad={myClub.players}
                 selections={selections}
-                vacatedPlayerIds={sentOffPlayer ? new Set([sentOffPlayer.id]) : undefined}
+                vacatedPlayerIds={sentOffPlayer ? new Set([sentOffPlayer.id]) : redCardPlayerId ? new Set([redCardPlayerId]) : undefined}
                 currentMatchMinute={minute}
                 defensiveLine={tactic?.defensiveLine}
                 attackStyle={attackStyle}
@@ -465,7 +532,7 @@ export function LiveTacticalModal({
                 onClick={() => onResolveRedCard && onResolveRedCard(null)}
                 disabled={busy}
               >
-                Manter Posicionamento Atual
+                Manter Posicionamento Atual e Retomar
               </button>
             </div>
           </div>

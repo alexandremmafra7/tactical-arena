@@ -91,7 +91,7 @@ gameRouter.post('/advance', async (req: AuthedRequest, res) => {
  * respondia 404 e o técnico não saía do lugar. Cada passo é um `advanceToNextMatchday`; para assim que o
  * dia entrega uma partida ao técnico, quando ele é demitido, ou quando o calendário não tem mais o que jogar.
  */
-const FAST_ADVANCE_MAX_STEPS = 8;
+const FAST_ADVANCE_MAX_STEPS = 40;
 
 gameRouter.post('/fast-advance', async (req: AuthedRequest, res) => {
   try {
