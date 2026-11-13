@@ -84,7 +84,8 @@ export function createApp() {
 
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     console.error(err);
-    res.status(500).json({ error: 'Erro interno do servidor' });
+    const message = err instanceof Error ? err.message : 'Erro interno do servidor';
+    res.status(500).json({ error: message });
   });
 
   return app;
