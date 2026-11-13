@@ -178,6 +178,12 @@ export function MatchBriefingPage() {
     setError(null);
     setBusy(true);
     try {
+      if (!escalado) {
+        const tactic = autoFillLineup(club);
+        await setRoundTactic(club.id, tactic);
+        const preset = await saveTacticPreset(club.id, 'Padrão (4-4-2)', tactic);
+        await setDefaultTacticPreset(club.id, preset.id);
+      }
       if (!teamTalkApplied && club.staffDelegationConfig?.delegateTeamTalks !== false) {
         const isDerby = Boolean(entry?.stageName && (entry.stageName.includes('Final') || entry.stageName.includes('Decisão')));
         const rec = getRecommendedTeamTalk('PRE_MATCH', 0, isDerby);
@@ -189,7 +195,6 @@ export function MatchBriefingPage() {
         navigate(`/match/${matchId}/live`);
         return;
       }
-      // O dia não tinha jogo para este clube. Voltar ao painel é mais honesto que ficar aqui esperando.
       navigate(`/clubs/${club.id}`);
     } catch (err) {
       setError((err as Error).message);
@@ -326,12 +331,12 @@ export function MatchBriefingPage() {
               type="button"
               className="briefing-hero-kickoff"
               onClick={entrarEmCampo}
-              disabled={busy || !escalado}
-              title={escalado ? 'Iniciar partida' : 'Defina os 11 titulares para entrar em campo'}
+              disabled={busy}
+              title={escalado ? 'Iniciar partida' : 'Escalar automaticamente os 11 titulares e iniciar partida'}
             >
               <span className="kickoff-hero-icon">⚽</span>
               <span className="kickoff-hero-label">
-                {busy ? 'INDO PARA O CAMPO...' : 'ENTRAR EM CAMPO'}
+                {busy ? 'ENTRANDO EM CAMPO...' : escalado ? 'ENTRAR EM CAMPO' : 'ESCALAR E ENTRAR'}
               </span>
               <span className="kickoff-hero-sub">({rodada})</span>
             </button>
@@ -518,8 +523,8 @@ export function MatchBriefingPage() {
             Escalar os melhores e entrar
           </button>
         )}
-        <button type="button" className="briefing-kickoff-footer" onClick={entrarEmCampo} disabled={busy || !escalado}>
-          {busy ? 'Indo para o campo...' : `ENTRAR EM CAMPO (${rodada}) →`}
+        <button type="button" className="briefing-kickoff-footer" onClick={entrarEmCampo} disabled={busy}>
+          {busy ? 'Entrando em campo...' : escalado ? `ENTRAR EM CAMPO (${rodada}) →` : `ESCALAR E ENTRAR (${rodada}) →`}
         </button>
       </div>
     </div>
