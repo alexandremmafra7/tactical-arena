@@ -39,6 +39,7 @@ import {
   saveTacticPreset,
   setDefaultTacticPreset,
   applyTeamTalk,
+  listMyClubs,
 } from '../api/client.js';
 import { ClubCrest } from '../components/ClubCrest.js';
 import { ClubNav } from '../components/ClubNav.js';
@@ -284,7 +285,16 @@ export function ClubHomePage() {
         }
 
       } catch (err) {
-        if (!cancelled) setError((err as Error).message);
+        if (!cancelled) {
+          setError((err as Error).message);
+          try {
+            const myClubs = await listMyClubs();
+            if (myClubs.length > 0 && myClubs[0].id !== clubId) {
+              navigate(`/clubs/${myClubs[0].id}`, { replace: true });
+              return;
+            }
+          } catch {}
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -296,7 +306,26 @@ export function ClubHomePage() {
   }, [clubId]);
 
   if (loading) return <div className="page">Carregando...</div>;
-  if (error && !club) return <div className="page error">{error}</div>;
+  if (error && !club) {
+    return (
+      <div className="page error" style={{ textAlign: 'center', padding: '60px 20px', maxWidth: 480, margin: '40px auto' }}>
+        <h2 style={{ fontSize: '1.4rem', color: '#f87171', marginBottom: 12 }}>Clube não encontrado</h2>
+        <p className="muted" style={{ margin: '0 0 24px', lineHeight: 1.5 }}>
+          {error.includes('não encontrado')
+            ? `O clube solicitado não foi encontrado ou sua sessão expirou.`
+            : error}
+        </p>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <button type="button" className="btn-primary" onClick={() => navigate('/dashboard')}>
+            Meus Clubes
+          </button>
+          <button type="button" className="btn-secondary" onClick={() => navigate('/start')}>
+            Novo Jogo
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (!club) return null;
 
   const standingIndex = league?.standings.findIndex((s) => s.clubId === club.id) ?? -1;

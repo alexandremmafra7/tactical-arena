@@ -13,23 +13,19 @@ export async function goToMatchday(clubId: string): Promise<string | null> {
     return current.id;
   }
 
-  for (let step = 0; step < 12; step++) {
-    const outcome = await advanceMatchday(clubId);
+  const outcome = await advanceMatchday(clubId);
 
-    if (outcome.sackedFromClubId) {
-      window.location.href = `/career?sacked=${outcome.sackedFromClubId}`;
-      return null;
-    }
-
-    if (outcome.matchId) return outcome.matchId;
-
-    const next = await getNextMatch(clubId).catch(() => null);
-    if (next && (next.status === 'LIVE' || next.status === 'WAITING_TACTICS')) {
-      return next.id;
-    }
-
-    if (!outcome.played || outcome.played.length === 0) break;
+  if (outcome.sackedFromClubId) {
+    window.location.href = `/career?sacked=${outcome.sackedFromClubId}`;
+    return null;
   }
 
-  return (await getNextMatch(clubId).catch(() => null))?.id ?? null;
+  if (outcome.matchId) return outcome.matchId;
+
+  const next = await getNextMatch(clubId).catch(() => null);
+  if (next && (next.status === 'LIVE' || next.status === 'WAITING_TACTICS')) {
+    return next.id;
+  }
+
+  return null;
 }

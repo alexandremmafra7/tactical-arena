@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -503,7 +503,8 @@ async function run() {
       const existing = await prisma.club.findUnique({ where: { slug: clubRow.slug } });
 
       if (!existing) {
-        const id = randomUUID();
+        const hash = createHash('sha256').update(`tactical-arena-club:${clubRow.slug}`).digest('hex');
+        const id = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
         let players;
         if (playerRows.length === 0) {
           // No roster data at all for this club (e.g. a real club identity imported without real player

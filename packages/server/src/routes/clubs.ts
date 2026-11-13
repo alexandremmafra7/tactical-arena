@@ -303,13 +303,16 @@ clubsRouter.get('/:id/news/transfers', async (_req, res) => {
  * de verdade circula.
  */
 clubsRouter.get('/:id/manager', async (req: AuthedRequest, res) => {
-  const clube = await prisma.club.findUnique({ where: { id: req.params.id }, select: { ownerId: true } });
+  let clube = await prisma.club.findUnique({ where: { id: req.params.id }, select: { id: true, ownerId: true } });
+  if (!clube) {
+    clube = await prisma.club.findUnique({ where: { slug: req.params.id }, select: { id: true, ownerId: true } });
+  }
   if (!clube) {
     res.status(404).json({ error: 'Clube não encontrado' });
     return;
   }
 
-  const treinador = await prisma.manager.findFirst({ where: { clubId: req.params.id } });
+  const treinador = await prisma.manager.findFirst({ where: { clubId: clube.id } });
   if (!treinador) {
     res.json(null);
     return;

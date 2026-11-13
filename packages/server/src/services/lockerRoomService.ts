@@ -12,7 +12,13 @@ export class LockerRoomError extends Error {}
  * and persisted. The API contract guarantees a valid `LockerRoomState` on every successful read.
  */
 export async function getClubLockerRoom(clubId: string): Promise<LockerRoomState> {
-  const club = await prisma.club.findUniqueOrThrow({ where: { id: clubId } });
+  let club = await prisma.club.findUnique({ where: { id: clubId } });
+  if (!club) {
+    club = await prisma.club.findUnique({ where: { slug: clubId } });
+  }
+  if (!club) {
+    throw new ClubNotFoundError(`Clube ${clubId} não encontrado`);
+  }
   const players = JSON.parse(club.playersJson) as Player[];
 
   try {
@@ -32,7 +38,7 @@ export async function getClubLockerRoom(clubId: string): Promise<LockerRoomState
 
     // Persist recomputed state
     await prisma.club.update({
-      where: { id: clubId },
+      where: { id: club.id },
       data: { lockerRoomJson: JSON.stringify(state) },
     });
 
@@ -58,13 +64,16 @@ export async function applyClubTeamTalk(
   context: TeamTalkContext,
   scoreDifferential?: number,
 ): Promise<TeamTalkResult> {
-  const club = await prisma.club.findUnique({ where: { id: clubId } });
+  let club = await prisma.club.findUnique({ where: { id: clubId } });
+  if (!club) {
+    club = await prisma.club.findUnique({ where: { slug: clubId } });
+  }
   if (!club) {
     throw new ClubNotFoundError(`Clube ${clubId} não encontrado`);
   }
   if (club.ownerId !== requestingUserId) {
     if (club.ownerId === BOT_OWNER_ID) {
-      await prisma.club.update({ where: { id: clubId }, data: { ownerId: requestingUserId } });
+      await prisma.club.update({ where: { id: club.id }, data: { ownerId: requestingUserId } });
       club.ownerId = requestingUserId;
     } else {
       throw new LockerRoomError('Você não é o dono deste clube');
@@ -114,12 +123,20 @@ export async function applyClubTeamTalk(
  * boost (client-side specific: promoted to a permanent correlation in the offline engine).
  */
 export async function resolvePlayerConcern(clubId: string, requestingUserId: string, playerId: string): Promise<LockerRoomState> {
-  const club = await prisma.club.findUnique({ where: { id: clubId } });
+  let club = await prisma.club.findUnique({ where: { id: clubId } });
+  if (!club) {
+    club = await prisma.club.findUnique({ where: { slug: clubId } });
+  }
   if (!club) {
     throw new ClubNotFoundError(`Clube ${clubId} não encontrado`);
   }
   if (club.ownerId !== requestingUserId) {
-    throw new LockerRoomError('Você não é o dono deste clube');
+    if (club.ownerId === BOT_OWNER_ID) {
+      await prisma.club.update({ where: { id: club.id }, data: { ownerId: requestingUserId } });
+      club.ownerId = requestingUserId;
+    } else {
+      throw new LockerRoomError('Você não é o dono deste clube');
+    }
   }
 
   const players = JSON.parse(club.playersJson) as Player[];

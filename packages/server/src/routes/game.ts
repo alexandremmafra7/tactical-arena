@@ -5,7 +5,7 @@ import { getClubCalendar } from '../services/calendarViewService.js';
 import { advanceToNextMatchday, peekNextMatchday, TimeError } from '../services/timeService.js';
 import { seasonWindow, aggregateClubPlayerStats, BOT_OWNER_ID } from '@tactical-arena/shared';
 import { prisma } from '../db/prisma.js';
-import { toDomain as toDomainClub } from '../services/clubService.js';
+import { toDomain as toDomainClub, ClubNotFoundError } from '../services/clubService.js';
 
 /** The game clock: what day it is, what is on the calendar, and moving to the next matchday. */
 export const gameRouter = Router();
@@ -49,15 +49,22 @@ gameRouter.post('/advance', async (req: AuthedRequest, res) => {
   try {
     const { clubId } = req.body ?? {};
     if (clubId && typeof clubId === 'string') {
-      const club = await prisma.club.findUnique({ where: { id: clubId } });
+      let club = await prisma.club.findUnique({ where: { id: clubId } });
+      if (!club) {
+        club = await prisma.club.findUnique({ where: { slug: clubId } });
+      }
       if (club && (club.ownerId === BOT_OWNER_ID || !club.ownerId)) {
-        await prisma.club.update({ where: { id: clubId }, data: { ownerId: req.userId! } });
+        await prisma.club.update({ where: { id: club.id }, data: { ownerId: req.userId! } });
       }
     }
     res.json(await advanceToNextMatchday(req.userId!));
   } catch (err) {
     if (err instanceof TimeError) {
       res.status(400).json({ error: err.message });
+      return;
+    }
+    if (err instanceof ClubNotFoundError) {
+      res.status(404).json({ error: err.message });
       return;
     }
     throw err;

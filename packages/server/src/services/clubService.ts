@@ -148,7 +148,10 @@ export async function createClub(ownerId: string, name: string, country: string)
 }
 
 export async function getClub(clubId: string): Promise<Club> {
-  const record = await prisma.club.findUnique({ where: { id: clubId } });
+  let record = await prisma.club.findUnique({ where: { id: clubId } });
+  if (!record) {
+    record = await prisma.club.findUnique({ where: { slug: clubId } });
+  }
   if (!record) {
     throw new ClubNotFoundError(`Clube ${clubId} não encontrado`);
   }
@@ -161,7 +164,7 @@ export async function getClub(clubId: string): Promise<Club> {
    * quinze pontos de prestígio em vez de oito. Uma consulta a mais por clube lido é barata; a alternativa era
    * denormalizar a divisão e mantê-la em dia em quatro lugares.
    */
-  const divisao = await divisionOfClub(clubId);
+  const divisao = await divisionOfClub(record.id);
   return toDomain(record, divisao);
 }
 
