@@ -243,15 +243,19 @@ export function ClubHomePage() {
 
     (async () => {
       try {
-        const [clubData, presets, newsData, formData, proposals, scoutData] = await Promise.all([
+        const [clubData, presets, newsData, formData, proposals] = await Promise.all([
           getClub(clubId),
           listTacticPresets(clubId),
           getClubNews(clubId),
           getClubForm(clubId).catch(() => [] as FormResult[]),
           listTransferProposals(clubId).catch(() => []),
-          listScoutingDatabase().catch(() => []),
         ]);
         if (cancelled) return;
+        // Só o país do clube, e sem segurar a tela: a base mundial inteira (~2.100 elencos) derrubava o
+        // servidor hospedado por falta de memória. As recomendações do diretor aparecem quando chegarem.
+        listScoutingDatabase(clubData.country)
+          .then((scoutData) => { if (!cancelled) setScoutClubs(scoutData); })
+          .catch(() => undefined);
         setClub(clubData);
         const contractKey = `cutscene_first_contract_${clubId}`;
         if (!localStorage.getItem(contractKey)) {
@@ -265,7 +269,6 @@ export function ClubHomePage() {
         setDefaultPreset(presets.find((p) => p.isDefault) ?? null);
         setNews(newsData);
         setForm(formData);
-        setScoutClubs(scoutData);
         // Only offers where *we* are the seller need a decision — the ones we sent are already ours.
         setProposalCount(proposals.filter((p) => p.sellerClubId === clubId && p.status === 'PENDING').length);
 

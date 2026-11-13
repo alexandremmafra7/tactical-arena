@@ -182,16 +182,25 @@ export function TransfersHubPage() {
         getClub(clubId),
         listTransferListings().catch(() => []),
         listTransferProposals(clubId).catch(() => []),
-        listScoutingDatabase().catch(() => []),
+        // Um país por vez — a base mundial inteira não cabe numa resposta só (ver listScoutingDatabase no servidor).
+        listScoutingDatabase(selectedCountry).catch(() => []),
         getTransferNews(clubId).catch(() => [] as NewsItem[]),
         Promise.resolve(getDeadlineDay(clubId)).catch(() => null),
       ]);
       setClub(clubData);
       setListings(marketListings);
       setProposals(proposalList);
-      setScoutClubs(scoutDb);
+      setScoutClubs((prev) => [...prev.filter((c) => c.country !== selectedCountry), ...scoutDb]);
       setTransferNews(news);
       setDeadlineDay(deadlineState);
+
+      // O país do próprio clube também entra na base, mesmo quando não é o selecionado na tela.
+      if (clubData.country && clubData.country !== selectedCountry) {
+        const ownCountry = clubData.country;
+        listScoutingDatabase(ownCountry)
+          .then((own) => setScoutClubs((prev) => [...prev.filter((c) => c.country !== ownCountry), ...own]))
+          .catch(() => undefined);
+      }
 
       // Default selected scout club
       if (scoutDb.length > 0 && !selectedScoutClubId) {

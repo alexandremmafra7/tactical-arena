@@ -162,7 +162,7 @@ export async function processConfidenceTick(
     if (treinadores.length === 0) break;
     cursor = treinadores[treinadores.length - 1].id;
 
-    const escritas: Promise<unknown>[] = [];
+    const escritas: ReturnType<typeof prisma.manager.update>[] = [];
 
     for (const treinador of treinadores) {
       const liga = ligas.get(treinador.clubId!);
@@ -211,7 +211,12 @@ export async function processConfidenceTick(
       );
     }
 
-    await Promise.all(escritas);
+    /**
+     * Um lote, uma transação. Soltas num `Promise.all`, cada escrita abria e fechava a própria transação
+     * no SQLite — medido: ~1.800 commits na primeira semana de um mundo completo, a maior parte do tempo
+     * de "avançar até o jogo", e o que fazia a partida parecer nunca começar num servidor de CPU modesta.
+     */
+    if (escritas.length > 0) await prisma.$transaction(escritas);
     if (treinadores.length < LOTE) break;
   }
 

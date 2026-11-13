@@ -313,9 +313,24 @@ export interface ScoutingClubSummary {
   titlesWon: number;
 }
 
+/**
+ * Sem país (ou 'GLOBAL') devolve só o ÍNDICE dos clubes — `players` vazio e `playersJson` nem sai do banco.
+ *
+ * O mundo importado tem ~2.100 clubes: devolver todos com elenco gerava ~86 MB de JSON e ~900 MB de pico de
+ * memória numa única requisição — a tela inicial do clube fazia isso a cada carga, e numa hospedagem de
+ * 512 MB o processo era morto por falta de memória (o jogo "não começava"). Elencos só saem por país.
+ */
 export async function listScoutingDatabase(country?: string): Promise<ScoutingClubSummary[]> {
+  if (!country || country === 'GLOBAL') {
+    const index = await prisma.club.findMany({
+      select: { id: true, name: true, country: true, slug: true, stadiumCapacity: true, titlesWon: true },
+      orderBy: { name: 'asc' },
+    });
+    return index.map((r) => ({ ...r, players: [] }));
+  }
+
   const records = await prisma.club.findMany({
-    where: (country && country !== 'GLOBAL') ? { country } : undefined,
+    where: { country },
     orderBy: { name: 'asc' },
   });
 
