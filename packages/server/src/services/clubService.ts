@@ -43,7 +43,7 @@ import { sponsorBoardFor } from './sponsorBoardService.js';
 import { recordPredictionOnce } from './staffRecordService.js';
 import { getGameState } from './gameStateService.js';
 import { closeTenure, openTenure } from './careerService.js';
-import { syncCurrentSaveToDisk } from './saveService.js';
+import { readSavesIndex, syncCurrentSaveToDisk, writeSavesIndex } from './saveService.js';
 import { stampContracts } from './newSquadContracts.js';
 import { seatUserAsManager, unseatUserAsManager } from './sackingService.js';
 import { REPUTATION_WALKOUT_PENALTY } from './managerService.js';
@@ -151,6 +151,27 @@ export async function getClub(clubId: string): Promise<Club> {
   let record = await prisma.club.findUnique({ where: { id: clubId } });
   if (!record) {
     record = await prisma.club.findUnique({ where: { slug: clubId } });
+  }
+  if (!record) {
+    try {
+      const index = readSavesIndex();
+      const match = index.saves.find((s) => s.clubId === clubId);
+      if (match) {
+        if (match.clubSlug) {
+          record = await prisma.club.findUnique({ where: { slug: match.clubSlug } });
+        }
+        if (!record && match.clubName) {
+          record = await prisma.club.findFirst({ where: { name: match.clubName } });
+        }
+        if (record) {
+          match.clubId = record.id;
+          if (record.slug) match.clubSlug = record.slug;
+          writeSavesIndex(index);
+        }
+      }
+    } catch {
+      // best-effort stale ID resolution
+    }
   }
   if (!record) {
     throw new ClubNotFoundError(`Clube ${clubId} não encontrado`);

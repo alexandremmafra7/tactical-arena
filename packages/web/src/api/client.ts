@@ -157,33 +157,68 @@ export async function checkServerHealth(url?: string): Promise<boolean> {
 export const API_BASE = import.meta.env['VITE_API_BASE'] ?? (import.meta.env.PROD ? '' : 'http://localhost:3001');
 
 function authHeaders(): Record<string, string> {
+  if (typeof localStorage === 'undefined') return {};
   const token = localStorage.getItem('token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  if (!token || token === 'undefined' || token === 'null' || token.trim() === '') {
+    return {};
+  }
+  return { Authorization: `Bearer ${token}` };
 }
 
-async function ensureServerAuthSession(base: string): Promise<{ token: string; userId: string } | null> {
-  try {
-    const email = `tecnico_${Date.now()}_${Math.floor(Math.random() * 10000)}@tactical.fc`;
-    const password = `pass_${Date.now()}`;
-    const res = await fetch(`${base}/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data?.token && data?.userId && typeof localStorage !== 'undefined') {
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('userId', data.userId);
-      setOfflineMode(false);
-      return { token: data.token, userId: data.userId };
+let authSessionPromise: Promise<{ token: string; userId: string } | null> | null = null;
+
+export async function ensureServerAuthSession(base?: string): Promise<{ token: string; userId: string } | null> {
+  if (authSessionPromise) return authSessionPromise;
+
+  const targetBase = base ?? getApiBase();
+  authSessionPromise = (async () => {
+    try {
+      // 1. Tentar endpoint anônimo direto
+      let res = await fetch(`${targetBase}/auth/anonymous`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }).catch(() => null);
+
+      // 2. Fallback para /auth/register
+      if (!res || !res.ok) {
+        const email = `tecnico_${Date.now()}_${Math.floor(Math.random() * 10000)}@tactical.fc`;
+        const password = `pass_${Date.now()}`;
+        res = await fetch(`${targetBase}/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        }).catch(() => null);
+      }
+
+      if (!res || !res.ok) return null;
+      const data = await res.json().catch(() => null);
+      if (data?.token && data?.userId && typeof localStorage !== 'undefined') {
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('userId', data.userId);
+        setOfflineMode(false);
+        window.dispatchEvent(new Event('tactical-auth-refreshed'));
+        return { token: data.token, userId: data.userId };
+      }
+    } catch {} finally {
+      authSessionPromise = null;
     }
-  } catch {}
-  return null;
+    return null;
+  })();
+
+  return authSessionPromise;
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const base = getApiBase();
+
+  // Garante que requisições protegidas nunca sejam disparadas com token ausente no ambiente online
+  if (!path.startsWith('/auth') && !path.startsWith('/health')) {
+    const existing = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
+    if (!existing || existing === 'undefined' || existing === 'null' || existing.trim() === '') {
+      await ensureServerAuthSession(base);
+    }
+  }
+
   try {
     let res = await fetch(`${base}${path}`, {
       ...options,
@@ -214,8 +249,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
           },
         });
         body = await res.json().catch(() => ({}));
-      } else if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem('token');
       }
     }
 
@@ -1248,6 +1281,7 @@ export interface SaveSlot {
   clockFormat?: ClockFormat;
   managerUserId?: string;
   managerToken?: string;
+  clubId?: string | null;
   clubName?: string;
   clubCountry?: string;
   division?: number;

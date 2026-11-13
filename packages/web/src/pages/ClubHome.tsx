@@ -40,6 +40,9 @@ import {
   setDefaultTacticPreset,
   applyTeamTalk,
   listMyClubs,
+  listSaves,
+  loadSave,
+  ensureServerAuthSession,
 } from '../api/client.js';
 import { ClubCrest } from '../components/ClubCrest.js';
 import { ClubNav } from '../components/ClubNav.js';
@@ -286,12 +289,38 @@ export function ClubHomePage() {
 
       } catch (err) {
         if (!cancelled) {
-          setError((err as Error).message);
+          const rawMsg = (err as Error).message || '';
+          if (rawMsg.includes('Token') || rawMsg.includes('401')) {
+            try {
+              const session = await ensureServerAuthSession();
+              if (session) {
+                const retryClub = await getClub(clubId);
+                if (!cancelled) {
+                  setClub(retryClub);
+                  setLoading(false);
+                  return;
+                }
+              }
+            } catch {}
+          }
+          setError(rawMsg);
           try {
             const myClubs = await listMyClubs();
             if (myClubs.length > 0 && myClubs[0].id !== clubId) {
               navigate(`/clubs/${myClubs[0].id}`, { replace: true });
               return;
+            }
+            const savesRes = await listSaves().catch(() => null);
+            if (savesRes && savesRes.saves.length > 0) {
+              const current = savesRes.saves.find((s: any) => s.id === savesRes.currentSaveId) ?? savesRes.saves[0];
+              if (current) {
+                const loaded = await loadSave(current.id).catch(() => null);
+                const recoveredId = loaded?.claimedClubId || loaded?.save?.clubId;
+                if (recoveredId && recoveredId !== clubId) {
+                  navigate(`/clubs/${recoveredId}`, { replace: true });
+                  return;
+                }
+              }
             }
           } catch {}
         }
@@ -307,20 +336,28 @@ export function ClubHomePage() {
 
   if (loading) return <div className="page">Carregando...</div>;
   if (error && !club) {
+    const isTokenErr = error.includes('Token') || error.includes('401');
     return (
       <div className="page error" style={{ textAlign: 'center', padding: '60px 20px', maxWidth: 480, margin: '40px auto' }}>
-        <h2 style={{ fontSize: '1.4rem', color: '#f87171', marginBottom: 12 }}>Clube não encontrado</h2>
+        <h2 style={{ fontSize: '1.4rem', color: '#f87171', marginBottom: 12 }}>
+          {isTokenErr ? 'Sessão Expirada' : 'Clube não encontrado'}
+        </h2>
         <p className="muted" style={{ margin: '0 0 24px', lineHeight: 1.5 }}>
-          {error.includes('não encontrado')
-            ? `O clube solicitado não foi encontrado ou sua sessão expirou.`
-            : error}
+          {isTokenErr
+            ? 'Sua sessão com o servidor expirou ou foi reiniciada. Clique em Reconectar para continuar.'
+            : error.includes('não encontrado')
+              ? 'O clube solicitado não foi encontrado no banco de dados.'
+              : error}
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button type="button" className="btn-primary" onClick={() => navigate('/dashboard')}>
-            Meus Clubes
+          <button type="button" className="btn-primary" onClick={() => window.location.reload()}>
+            Reconectar
           </button>
-          <button type="button" className="btn-secondary" onClick={() => navigate('/start')}>
-            Novo Jogo
+          <button type="button" className="btn-secondary" onClick={() => navigate('/')}>
+            Início / Carreira
+          </button>
+          <button type="button" className="btn-secondary" onClick={() => navigate('/dashboard')}>
+            Meus Clubes
           </button>
         </div>
       </div>

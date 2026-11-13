@@ -6,6 +6,7 @@ import { advanceToNextMatchday, peekNextMatchday, TimeError } from '../services/
 import { seasonWindow, aggregateClubPlayerStats, BOT_OWNER_ID } from '@tactical-arena/shared';
 import { prisma } from '../db/prisma.js';
 import { toDomain as toDomainClub, ClubNotFoundError } from '../services/clubService.js';
+import { readSavesIndex } from '../services/saveService.js';
 
 /** The game clock: what day it is, what is on the calendar, and moving to the next matchday. */
 export const gameRouter = Router();
@@ -52,6 +53,17 @@ gameRouter.post('/advance', async (req: AuthedRequest, res) => {
       let club = await prisma.club.findUnique({ where: { id: clubId } });
       if (!club) {
         club = await prisma.club.findUnique({ where: { slug: clubId } });
+      }
+      if (!club) {
+        try {
+          const index = readSavesIndex();
+          const match = index.saves.find((s) => s.clubId === clubId);
+          if (match?.clubSlug) {
+            club = await prisma.club.findUnique({ where: { slug: match.clubSlug } });
+          } else if (match?.clubName) {
+            club = await prisma.club.findFirst({ where: { name: match.clubName } });
+          }
+        } catch {}
       }
       if (club && (club.ownerId === BOT_OWNER_ID || !club.ownerId)) {
         await prisma.club.update({ where: { id: club.id }, data: { ownerId: req.userId! } });

@@ -36,6 +36,7 @@ export interface SaveSlot {
   gameMode?: GameMode;
   managerUserId?: string;
   managerToken?: string;
+  clubId?: string | null;
   clubName?: string;
   clubCountry?: string;
   clubSlug?: string | null;
@@ -109,6 +110,7 @@ function getIndexPath(): string {
 }
 
 interface LiveSaveContext {
+  clubId?: string;
   clubName?: string;
   clubCountry?: string;
   clubSlug?: string | null;
@@ -131,9 +133,21 @@ interface LiveSaveContext {
 
 export async function getLiveClubInfo(userId?: string): Promise<LiveSaveContext> {
   try {
-    const club = userId
+    let club = userId
       ? await prisma.club.findFirst({ where: { ownerId: userId } })
       : await prisma.club.findFirst({ where: { ownerId: { not: BOT_OWNER_ID } } });
+    if (!club && userId) {
+      const save = readSavesIndex().saves.find((s) => s.managerUserId === userId);
+      if (save?.clubId) {
+        club = await prisma.club.findUnique({ where: { id: save.clubId } });
+      }
+      if (!club && save?.clubSlug) {
+        club = await prisma.club.findUnique({ where: { slug: save.clubSlug } });
+      }
+      if (!club && save?.clubName) {
+        club = await prisma.club.findFirst({ where: { name: save.clubName } });
+      }
+    }
     if (!club) return {};
 
     const gameState = await getGameState();
@@ -151,6 +165,7 @@ export async function getLiveClubInfo(userId?: string): Promise<LiveSaveContext>
       .sort((a, b) => statusRank(a.status) - statusRank(b.status))[0];
 
     const base = {
+      clubId: club.id,
       clubName: club.name,
       clubCountry: club.country,
       clubSlug: club.slug,
@@ -249,6 +264,7 @@ export async function listAllSaves(): Promise<{ currentSaveId: string; currentMa
   const updatedSaves = index.saves.map((save) => save.id === index.currentSaveId ? {
     ...save,
     isCurrent: true,
+    clubId: liveInfo.clubId ?? save.clubId,
     clubName: liveInfo.clubName ?? save.clubName ?? 'Sem clube',
     clubCountry: liveInfo.clubCountry ?? save.clubCountry ?? save.managerNationality ?? 'BRA',
     division: liveInfo.division ?? save.division ?? 1,
@@ -377,15 +393,28 @@ export async function loadSave(id: string): Promise<{ save: SaveSlot; token: str
   let claimedClubId: string | undefined;
   try {
     let userClub = await prisma.club.findFirst({ where: { ownerId: userId } });
+    if (!userClub && target.clubId) {
+      userClub = await prisma.club.findUnique({ where: { id: target.clubId } });
+    }
+    if (!userClub && target.clubSlug) {
+      userClub = await prisma.club.findUnique({ where: { slug: target.clubSlug } });
+    }
+    if (!userClub && target.clubName) {
+      userClub = await prisma.club.findFirst({ where: { name: target.clubName } });
+    }
     if (!userClub) {
       const anyClaimedClub = await prisma.club.findFirst({ where: { ownerId: { not: BOT_OWNER_ID } } });
       if (anyClaimedClub) {
-        await prisma.club.update({ where: { id: anyClaimedClub.id }, data: { ownerId: userId } });
         userClub = anyClaimedClub;
       }
     }
     if (userClub) {
+      if (userClub.ownerId !== userId) {
+        await prisma.club.update({ where: { id: userClub.id }, data: { ownerId: userId } });
+      }
       claimedClubId = userClub.id;
+      target.clubId = userClub.id;
+      if (userClub.slug) target.clubSlug = userClub.slug;
       target.clubName = userClub.name;
       target.clubCountry = userClub.country;
       target.budget = userClub.budget;

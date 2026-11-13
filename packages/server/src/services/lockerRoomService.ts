@@ -2,8 +2,28 @@ import type { LockerRoomState, Player, TeamTalkOption, TeamTalkResult, TeamTalkC
 import { computeLockerRoomHierarchy, getAvailableTeamTalks, applyTeamTalk, createRng, BOT_OWNER_ID } from '@tactical-arena/shared';
 import { prisma } from '../db/prisma.js';
 import { ClubNotFoundError } from './clubService.js';
+import { readSavesIndex } from './saveService.js';
 
 export class LockerRoomError extends Error {}
+
+async function findClubRecord(clubId: string) {
+  let club = await prisma.club.findUnique({ where: { id: clubId } });
+  if (!club) {
+    club = await prisma.club.findUnique({ where: { slug: clubId } });
+  }
+  if (!club) {
+    try {
+      const index = readSavesIndex();
+      const match = index.saves.find((s) => s.clubId === clubId);
+      if (match?.clubSlug) {
+        club = await prisma.club.findUnique({ where: { slug: match.clubSlug } });
+      } else if (match?.clubName) {
+        club = await prisma.club.findFirst({ where: { name: match.clubName } });
+      }
+    } catch {}
+  }
+  return club;
+}
 
 /**
  * Retrieves the current locker room state for a club, deriving it from the current squad.
@@ -12,10 +32,7 @@ export class LockerRoomError extends Error {}
  * and persisted. The API contract guarantees a valid `LockerRoomState` on every successful read.
  */
 export async function getClubLockerRoom(clubId: string): Promise<LockerRoomState> {
-  let club = await prisma.club.findUnique({ where: { id: clubId } });
-  if (!club) {
-    club = await prisma.club.findUnique({ where: { slug: clubId } });
-  }
+  const club = await findClubRecord(clubId);
   if (!club) {
     throw new ClubNotFoundError(`Clube ${clubId} não encontrado`);
   }
@@ -64,10 +81,7 @@ export async function applyClubTeamTalk(
   context: TeamTalkContext,
   scoreDifferential?: number,
 ): Promise<TeamTalkResult> {
-  let club = await prisma.club.findUnique({ where: { id: clubId } });
-  if (!club) {
-    club = await prisma.club.findUnique({ where: { slug: clubId } });
-  }
+  const club = await findClubRecord(clubId);
   if (!club) {
     throw new ClubNotFoundError(`Clube ${clubId} não encontrado`);
   }
@@ -123,10 +137,7 @@ export async function applyClubTeamTalk(
  * boost (client-side specific: promoted to a permanent correlation in the offline engine).
  */
 export async function resolvePlayerConcern(clubId: string, requestingUserId: string, playerId: string): Promise<LockerRoomState> {
-  let club = await prisma.club.findUnique({ where: { id: clubId } });
-  if (!club) {
-    club = await prisma.club.findUnique({ where: { slug: clubId } });
-  }
+  const club = await findClubRecord(clubId);
   if (!club) {
     throw new ClubNotFoundError(`Clube ${clubId} não encontrado`);
   }

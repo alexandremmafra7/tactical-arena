@@ -10,6 +10,7 @@ import {
   deleteSave,
   duplicateSave,
   getClub,
+  listAvailableClubs,
   listMyClubs,
   listSaves,
   loadSave,
@@ -140,35 +141,44 @@ export function StartSubmenuModal({ isOpen, onClose, onNewCareer, onLoadCareer, 
 
   const activeSave = saves.find((s) => s.id === currentSaveId) ?? saves[0];
 
+  async function resolveTargetClub(loadedSaveClubId?: string, saveObj?: SaveSlot | null) {
+    const targetClubId = loadedSaveClubId || saveObj?.clubId;
+    let validClub = targetClubId ? await getClub(targetClubId).catch(() => null) : null;
+
+    if (!validClub && saveObj?.clubSlug) {
+      validClub = await getClub(saveObj.clubSlug).catch(() => null);
+    }
+    if (!validClub && saveObj?.clubName) {
+      const avail = await listAvailableClubs(saveObj.clubCountry || 'BRA', saveObj.division || 1).catch(() => []);
+      validClub = avail.find((c) => c.name.toLowerCase() === saveObj.clubName?.toLowerCase()) ?? null;
+    }
+    if (!validClub) {
+      const myClubs = await listMyClubs().catch(() => []);
+      if (myClubs.length > 0) validClub = myClubs[0];
+    }
+    if (!validClub) {
+      const avail = await listAvailableClubs('BRA', 1).catch(() => []);
+      if (avail.length > 0) validClub = avail[0];
+    }
+    return validClub;
+  }
+
   async function handleContinue() {
     setBusy(true);
     setError(null);
     try {
-      let targetClubId: string | undefined;
+      let loadedClubId: string | undefined;
       if (activeSave) {
         const loaded = await loadSave(activeSave.id).catch(() => null);
         if (loaded?.token && loaded?.userId) {
           signIn(loaded.token, loaded.userId);
         }
-        if (loaded?.claimedClubId) {
-          targetClubId = loaded.claimedClubId;
-        }
+        loadedClubId = loaded?.claimedClubId || loaded?.save?.clubId;
       }
-      if (!targetClubId) {
-        const clubs = await listMyClubs().catch(() => []);
-        if (clubs.length > 0) {
-          targetClubId = clubs[0].id;
-        }
-      }
-      if (targetClubId) {
-        const validClub = await getClub(targetClubId).catch(() => null);
-        if (validClub) {
-          navigate(`/clubs/${targetClubId}`);
-          onClose();
-        } else {
-          setTab('load');
-          setError('O clube desta carreira não foi encontrado. Escolha outro save ou crie um novo técnico.');
-        }
+      const validClub = await resolveTargetClub(loadedClubId, activeSave);
+      if (validClub) {
+        navigate(`/clubs/${validClub.id}`);
+        onClose();
       } else {
         navigate('/dashboard');
         onClose();
@@ -189,22 +199,11 @@ export function StartSubmenuModal({ isOpen, onClose, onNewCareer, onLoadCareer, 
         signIn(loaded.token, loaded.userId);
       }
       onLoadCareer(saveId);
-      let targetClubId = loaded.claimedClubId;
-      if (!targetClubId) {
-        const clubs = await listMyClubs().catch(() => []);
-        if (clubs.length > 0) {
-          targetClubId = clubs[0].id;
-        }
-      }
-      if (targetClubId) {
-        const validClub = await getClub(targetClubId).catch(() => null);
-        if (validClub) {
-          navigate(`/clubs/${targetClubId}`);
-          onClose();
-        } else {
-          setTab('load');
-          setError('O clube deste jogo salvo não foi encontrado no banco de dados.');
-        }
+      const targetSave = saves.find((s) => s.id === saveId) ?? loaded.save;
+      const validClub = await resolveTargetClub(loaded.claimedClubId || loaded.save?.clubId, targetSave);
+      if (validClub) {
+        navigate(`/clubs/${validClub.id}`);
+        onClose();
       } else {
         navigate('/dashboard');
         onClose();

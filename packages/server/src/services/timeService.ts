@@ -6,6 +6,7 @@ import { playCupRound } from './cupService.js';
 import { getNextActionableMatch, tickLiveMatchSystem } from './matchService.js';
 import { processWeeklyTick } from './weeklyTickService.js';
 import { turnSeason } from './seasonService.js';
+import { readSavesIndex } from './saveService.js';
 
 export class TimeError extends Error {}
 
@@ -183,7 +184,25 @@ async function runWeeksUpTo(target: GameDate): Promise<{ run: GameDate[]; sacked
  * presses the same button.
  */
 export async function advanceOnce(userId: string, mayTurnSeason: boolean, mayPlayMatch: boolean = true): Promise<MatchdayOutcome> {
-  const club = await prisma.club.findFirst({ where: { ownerId: userId }, select: { id: true } });
+  let club = await prisma.club.findFirst({ where: { ownerId: userId }, select: { id: true } });
+  if (!club) {
+    try {
+      const save = readSavesIndex().saves.find((s) => s.managerUserId === userId);
+      if (save?.clubId) {
+        let found = await prisma.club.findUnique({ where: { id: save.clubId }, select: { id: true } });
+        if (!found && save.clubSlug) {
+          found = await prisma.club.findUnique({ where: { slug: save.clubSlug }, select: { id: true } });
+        }
+        if (!found && save.clubName) {
+          found = await prisma.club.findFirst({ where: { name: save.clubName }, select: { id: true } });
+        }
+        if (found) {
+          await prisma.club.update({ where: { id: found.id }, data: { ownerId: userId } });
+          club = found;
+        }
+      }
+    } catch {}
+  }
   if (!club) {
     throw new TimeError('Você precisa de um clube para avançar no calendário');
   }

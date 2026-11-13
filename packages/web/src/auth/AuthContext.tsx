@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
 interface AuthState {
   token: string | null;
@@ -13,6 +13,22 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [userId, setUserId] = useState<string | null>(localStorage.getItem('userId'));
+
+  useEffect(() => {
+    function syncAuth() {
+      const storedToken = localStorage.getItem('token');
+      const storedUserId = localStorage.getItem('userId');
+      if (storedToken !== token) setToken(storedToken);
+      if (storedUserId !== userId) setUserId(storedUserId);
+    }
+
+    window.addEventListener('storage', syncAuth);
+    window.addEventListener('tactical-auth-refreshed', syncAuth);
+    return () => {
+      window.removeEventListener('storage', syncAuth);
+      window.removeEventListener('tactical-auth-refreshed', syncAuth);
+    };
+  }, [token, userId]);
 
   const signIn = (newToken: string, newUserId: string) => {
     localStorage.setItem('token', newToken);
