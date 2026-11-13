@@ -14,7 +14,7 @@ export async function goToMatchday(clubId: string): Promise<string | null> {
   }
 
   for (let step = 0; step < 12; step++) {
-    const outcome = await advanceMatchday();
+    const outcome = await advanceMatchday(clubId);
 
     if (outcome.sackedFromClubId) {
       window.location.href = `/career?sacked=${outcome.sackedFromClubId}`;

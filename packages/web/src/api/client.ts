@@ -70,6 +70,20 @@ export function isHostedWebOrigin(): boolean {
   return false;
 }
 
+/**
+ * Executes a local fallback only when running in genuine offline / native environment.
+ * On a hosted web origin, we NEVER fall back to localEngine — the server is authoritative,
+ * and swallowing server errors creates phantom 'Clube não encontrado' bugs from local mock data.
+ */
+export function localFallback<T>(fallbackFn: () => Promise<T> | T): (err: any) => Promise<T> {
+  return (err: any) => {
+    if (isHostedWebOrigin()) {
+      throw err;
+    }
+    return Promise.resolve(fallbackFn());
+  };
+}
+
 export function isOfflineMode(): boolean {
   if (isHostedWebOrigin()) return false;
   if (typeof localStorage === 'undefined') return false;
@@ -236,9 +250,7 @@ export function login(email: string, password: string) {
 
 export function createClub(name: string, country: string) {
   if (isOfflineMode()) return localEngine.localCreateClub(name, country);
-  return request<Club>('/clubs', { method: 'POST', body: JSON.stringify({ name, country }) }).catch(() =>
-    localEngine.localCreateClub(name, country)
-  );
+  return request<Club>('/clubs', { method: 'POST', body: JSON.stringify({ name, country }) }).catch(localFallback(() => localEngine.localCreateClub(name, country)));
 }
 
 export function createCustomChampionship(
@@ -253,17 +265,17 @@ export function createCustomChampionship(
   return request<CreateCareerResult>('/custom-championships', {
     method: 'POST',
     body: JSON.stringify({ config, userClubId, managerName, participatingClubs }),
-  }).catch(() => localEngine.localCreateCustomChampionship(config, userClubId, managerName, participatingClubs));
+  }).catch(localFallback(() => localEngine.localCreateCustomChampionship(config, userClubId, managerName, participatingClubs)));
 }
 
 export function listMyClubs() {
   if (isOfflineMode()) return localEngine.localListMyClubs();
-  return request<Club[]>('/clubs/mine').catch(() => localEngine.localListMyClubs());
+  return request<Club[]>('/clubs/mine').catch(localFallback(() => localEngine.localListMyClubs()));
 }
 
 export function getClub(id: string) {
   if (isOfflineMode()) return localEngine.localGetClub(id);
-  return request<Club>(`/clubs/${id}`).catch(() => localEngine.localGetClub(id));
+  return request<Club>(`/clubs/${id}`).catch(localFallback(() => localEngine.localGetClub(id)));
 }
 
 /**
@@ -283,17 +295,13 @@ export function listAvailableClubs(country?: string, division?: number) {
   if (country) params.set('country', country);
   if (division !== undefined) params.set('division', String(division));
   const query = params.toString();
-  return request<Club[]>(`/clubs/available${query ? `?${query}` : ''}`).catch(() =>
-    localEngine.localListAvailableClubs(country, division)
-  );
+  return request<Club[]>(`/clubs/available${query ? `?${query}` : ''}`).catch(localFallback(() => localEngine.localListAvailableClubs(country, division)));
 }
 
 /** Countries with a second division, which is where founding a club has somewhere to lead. */
 export function listFoundableCountries() {
   if (isOfflineMode()) return localEngine.localListFoundableCountries();
-  return request<{ code: string; accessDivision: number; size: number }[]>('/clubs/foundable-countries').catch(() =>
-    localEngine.localListFoundableCountries(),
-  );
+  return request<{ code: string; accessDivision: number; size: number }[]>('/clubs/foundable-countries').catch(localFallback(() => localEngine.localListFoundableCountries(),));
 }
 
 /** Founds a club in its country's access division, taking the weakest side's place (see foundClub). */
@@ -335,23 +343,23 @@ export function claimClub(clubId: string, gameMode?: GameMode) {
 /** Last few results, oldest first — the V-E-D-V-V strip. */
 export function getClubForm(clubId: string) {
   if (isOfflineMode()) return localEngine.localGetClubForm(clubId);
-  return request<FormResult[]>(`/clubs/${clubId}/form`).catch(() => localEngine.localGetClubForm(clubId));
+  return request<FormResult[]>(`/clubs/${clubId}/form`).catch(localFallback(() => localEngine.localGetClubForm(clubId)));
 }
 
 export function getClubNews(clubId: string) {
   if (isOfflineMode()) return localEngine.localGetClubNews(clubId);
-  return request<NewsItem[]>(`/clubs/${clubId}/news`).catch(() => localEngine.localGetClubNews(clubId));
+  return request<NewsItem[]>(`/clubs/${clubId}/news`).catch(localFallback(() => localEngine.localGetClubNews(clubId)));
 }
 
 /** Market-wide transfers, not just this club's — the id only routes the request (see listTransferNews). */
 export function getTransferNews(clubId: string) {
   if (isOfflineMode()) return localEngine.localGetClubNews(clubId);
-  return request<NewsItem[]>(`/clubs/${clubId}/news/transfers`).catch(() => localEngine.localGetClubNews(clubId));
+  return request<NewsItem[]>(`/clubs/${clubId}/news/transfers`).catch(localFallback(() => localEngine.localGetClubNews(clubId)));
 }
 
 export function getClubLockerRoom(clubId: string) {
   if (isOfflineMode()) return localEngine.localGetLockerRoom(clubId);
-  return request<LockerRoomState>(`/clubs/${clubId}/locker-room`).catch(() => localEngine.localGetLockerRoom(clubId));
+  return request<LockerRoomState>(`/clubs/${clubId}/locker-room`).catch(localFallback(() => localEngine.localGetLockerRoom(clubId)));
 }
 
 export function applyTeamTalk(
@@ -364,7 +372,7 @@ export function applyTeamTalk(
   return request<TeamTalkResult>(`/clubs/${clubId}/team-talk`, {
     method: 'POST',
     body: JSON.stringify({ talkId, context, scoreDifferential }),
-  }).catch(() => localEngine.localApplyTeamTalk(clubId, talkId, context, scoreDifferential));
+  }).catch(localFallback(() => localEngine.localApplyTeamTalk(clubId, talkId, context, scoreDifferential)));
 }
 
 /** URL for a club's real crest image, if one was provided via the content pipeline — 404s if not. */
@@ -403,7 +411,7 @@ export function getContracts(clubId: string) {
     seasonYear: number;
     players: { playerId: string; contractUntil: number | null; seasonsRemaining: number; costByYears: Record<string, number> }[];
     expiringAnalysis?: CategorizedExpiringContracts;
-  }>(`/clubs/${clubId}/contracts`).catch(() => localEngine.localGetContracts(clubId));
+  }>(`/clubs/${clubId}/contracts`).catch(localFallback(() => localEngine.localGetContracts(clubId)));
 }
 
 export function batchRenewContracts(
@@ -425,7 +433,7 @@ export function batchRenewContracts(
   }>(`/clubs/${clubId}/contracts/batch-renew`, {
     method: 'POST',
     body: JSON.stringify(payload),
-  }).catch(() => localEngine.localBatchRenewContracts(clubId, playerIds, optionsOrYears));
+  }).catch(localFallback(() => localEngine.localBatchRenewContracts(clubId, playerIds, optionsOrYears)));
 }
 
 export function renewPlayerContract(clubId: string, playerId: string, years: number) {
@@ -433,7 +441,7 @@ export function renewPlayerContract(clubId: string, playerId: string, years: num
   return request<{ club: Club; cost: number }>(`/clubs/${clubId}/players/${playerId}/renew`, {
     method: 'POST',
     body: JSON.stringify({ years }),
-  }).catch(() => localEngine.localRenewPlayerContract(clubId, playerId, years));
+  }).catch(localFallback(() => localEngine.localRenewPlayerContract(clubId, playerId, years)));
 }
 
 export function listFreeAgents(clubId: string, options: { position?: string; limit?: number } = {}) {
@@ -442,9 +450,7 @@ export function listFreeAgents(clubId: string, options: { position?: string; lim
   if (options.position) query.set('position', options.position);
   if (options.limit) query.set('limit', String(options.limit));
   const sufixo = query.toString() ? `?${query}` : '';
-  return request<{ id: string; player: Player; sinceSeason: number }[]>(`/clubs/${clubId}/free-agents${sufixo}`).catch(() =>
-    localEngine.localListFreeAgents(clubId, options),
-  );
+  return request<{ id: string; player: Player; sinceSeason: number }[]>(`/clubs/${clubId}/free-agents${sufixo}`).catch(localFallback(() => localEngine.localListFreeAgents(clubId, options),));
 }
 
 export function signFreeAgent(clubId: string, freeAgentId: string, years?: number) {
@@ -452,7 +458,7 @@ export function signFreeAgent(clubId: string, freeAgentId: string, years?: numbe
   return request<{ club: Club; cost: number; player: Player }>(`/clubs/${clubId}/free-agents/${freeAgentId}/sign`, {
     method: 'POST',
     body: JSON.stringify({ years: years ?? 3 }),
-  }).catch(() => localEngine.localSignFreeAgent(clubId, freeAgentId, years));
+  }).catch(localFallback(() => localEngine.localSignFreeAgent(clubId, freeAgentId, years)));
 }
 
 export function crestUrl(slug: string) {
@@ -470,20 +476,18 @@ export function createMatch(homeClubId: string, awayClubId: string) {
 
 export function getMatch(id: string) {
   if (isOfflineMode()) return localEngine.localGetMatch(id);
-  return request<Match>(`/matches/${id}`).catch(() => localEngine.localGetMatch(id));
+  return request<Match>(`/matches/${id}`).catch(localFallback(() => localEngine.localGetMatch(id)));
 }
 
 /** The one match (if any) this club should act on right now — still waiting on a tactic or already live. */
 export function getNextMatch(clubId: string) {
   if (isOfflineMode()) return localEngine.localGetNextMatch(clubId);
-  return request<Match | null>(`/matches/next/${clubId}`).catch(() => localEngine.localGetNextMatch(clubId));
+  return request<Match | null>(`/matches/next/${clubId}`).catch(localFallback(() => localEngine.localGetNextMatch(clubId)));
 }
 
 export function submitTactic(matchId: string, tactic: Tactic) {
   if (isOfflineMode()) return localEngine.localSubmitTactic(matchId, tactic);
-  return request<Match>(`/matches/${matchId}/tactic`, { method: 'POST', body: JSON.stringify(tactic) }).catch(() =>
-    localEngine.localSubmitTactic(matchId, tactic)
-  );
+  return request<Match>(`/matches/${matchId}/tactic`, { method: 'POST', body: JSON.stringify(tactic) }).catch(localFallback(() => localEngine.localSubmitTactic(matchId, tactic)));
 }
 
 /**
@@ -497,7 +501,7 @@ export function advanceLiveMatch(matchId: string, toMinute: number, interactive 
   return request<Match>(`/matches/${matchId}/live/advance`, {
     method: 'POST',
     body: JSON.stringify({ toMinute, interactive }),
-  }).catch(() => localEngine.localAdvanceLiveMatch(matchId, toMinute));
+  }).catch(localFallback(() => localEngine.localAdvanceLiveMatch(matchId, toMinute)));
 }
 
 /**
@@ -521,16 +525,12 @@ export async function peekLiveMatch(matchId: string, toMinute: number, interacti
 /** Changes one side's tactic/lineup/subs while the live match is paused. */
 export function updateLiveMatchTactic(matchId: string, tactic: Tactic) {
   if (isOfflineMode()) return localEngine.localUpdateLiveMatchTactic(matchId, tactic);
-  return request<Match>(`/matches/${matchId}/live/tactic`, { method: 'POST', body: JSON.stringify(tactic) }).catch(() =>
-    localEngine.localUpdateLiveMatchTactic(matchId, tactic)
-  );
+  return request<Match>(`/matches/${matchId}/live/tactic`, { method: 'POST', body: JSON.stringify(tactic) }).catch(localFallback(() => localEngine.localUpdateLiveMatchTactic(matchId, tactic)));
 }
 
 export function resetLiveMatch(matchId: string) {
   if (isOfflineMode()) return localEngine.localResetLiveMatch(matchId);
-  return request<Match>(`/matches/${matchId}/live/reset`, { method: 'POST' }).catch(() =>
-    localEngine.localResetLiveMatch(matchId)
-  );
+  return request<Match>(`/matches/${matchId}/live/reset`, { method: 'POST' }).catch(localFallback(() => localEngine.localResetLiveMatch(matchId)));
 }
 
 export interface InjuryDecisionOptions {
@@ -544,9 +544,7 @@ export interface InjuryDecisionOptions {
 /** Who may come on while play is halted for an injury. */
 export function getInjuryDecision(matchId: string) {
   if (isOfflineMode()) return localEngine.localGetInjuryDecision(matchId);
-  return request<InjuryDecisionOptions>(`/matches/${matchId}/live/decision`).catch(() =>
-    localEngine.localGetInjuryDecision(matchId),
-  );
+  return request<InjuryDecisionOptions>(`/matches/${matchId}/live/decision`).catch(localFallback(() => localEngine.localGetInjuryDecision(matchId),));
 }
 
 /** Answers the halt so the clock can restart. `null` plays on a man short. */
@@ -555,7 +553,7 @@ export function resolveInjuryDecision(matchId: string, replacementPlayerId: stri
   return request<Match>(`/matches/${matchId}/live/decision`, {
     method: 'POST',
     body: JSON.stringify({ replacementPlayerId }),
-  }).catch(() => localEngine.localResolveInjuryDecision(matchId, replacementPlayerId));
+  }).catch(localFallback(() => localEngine.localResolveInjuryDecision(matchId, replacementPlayerId)));
 }
 
 /**
@@ -568,7 +566,7 @@ export function resolveRedCardDecision(matchId: string, lineupPlayerIds: string[
   return request<Match>(`/matches/${matchId}/live/decision/reorganize`, {
     method: 'POST',
     body: JSON.stringify({ lineupPlayerIds }),
-  }).catch(() => localEngine.localResolveRedCardDecision(matchId, lineupPlayerIds));
+  }).catch(localFallback(() => localEngine.localResolveRedCardDecision(matchId, lineupPlayerIds)));
 }
 
 export type MatchCompetition =
@@ -579,22 +577,18 @@ export type MatchCompetition =
  *  banner and round ticker's data source. Both are null/empty for a bare PvP challenge. */
 export function getMatchSiblings(matchId: string) {
   if (isOfflineMode()) return localEngine.localGetMatchSiblings(matchId);
-  return request<{ competition: MatchCompetition | null; fixtures: Match[] }>(`/matches/${matchId}/siblings`).catch(() =>
-    localEngine.localGetMatchSiblings(matchId),
-  );
+  return request<{ competition: MatchCompetition | null; fixtures: Match[] }>(`/matches/${matchId}/siblings`).catch(localFallback(() => localEngine.localGetMatchSiblings(matchId),));
 }
 
 /** Paces a fixture nobody owns forward, in lockstep with the match a human is actually watching. */
 export function tickLiveMatch(matchId: string, toMinute: number) {
   if (isOfflineMode()) return localEngine.localTickLiveMatch(matchId, toMinute);
-  return request<Match>(`/matches/${matchId}/live/tick`, { method: 'POST', body: JSON.stringify({ toMinute }) }).catch(() =>
-    localEngine.localTickLiveMatch(matchId, toMinute),
-  );
+  return request<Match>(`/matches/${matchId}/live/tick`, { method: 'POST', body: JSON.stringify({ toMinute }) }).catch(localFallback(() => localEngine.localTickLiveMatch(matchId, toMinute),));
 }
 
 export function listTransferListings() {
   if (isOfflineMode()) return localEngine.localListTransferListings();
-  return request<TransferListing[]>('/transfers/listings').catch(() => localEngine.localListTransferListings());
+  return request<TransferListing[]>('/transfers/listings').catch(localFallback(() => localEngine.localListTransferListings()));
 }
 
 export function listPlayerForTransfer(clubId: string, playerId: string, askingPrice: number) {
@@ -613,7 +607,7 @@ export function buyTransferListing(listingId: string, buyerClubId: string) {
   return request<void>(`/transfers/listings/${listingId}/buy`, {
     method: 'POST',
     body: JSON.stringify({ buyerClubId }),
-  }).catch(() => localEngine.localBuyTransferListing(listingId, buyerClubId));
+  }).catch(localFallback(() => localEngine.localBuyTransferListing(listingId, buyerClubId)));
 }
 
 export function payReleaseClause(sellerClubId: string, playerId: string, buyerClubId: string) {
@@ -621,14 +615,12 @@ export function payReleaseClause(sellerClubId: string, playerId: string, buyerCl
   return request<void>('/transfers/release-clause', {
     method: 'POST',
     body: JSON.stringify({ sellerClubId, playerId, buyerClubId }),
-  }).catch(() => localEngine.localPayReleaseClause(sellerClubId, playerId, buyerClubId));
+  }).catch(localFallback(() => localEngine.localPayReleaseClause(sellerClubId, playerId, buyerClubId)));
 }
 
 export function listTransferProposals(clubId: string) {
   if (isOfflineMode()) return localEngine.localListTransferProposals(clubId);
-  return request<TransferProposal[]>(`/transfers/proposals?clubId=${clubId}`).catch(() =>
-    localEngine.localListTransferProposals(clubId)
-  );
+  return request<TransferProposal[]>(`/transfers/proposals?clubId=${clubId}`).catch(localFallback(() => localEngine.localListTransferProposals(clubId)));
 }
 
 export function createTransferProposal(params: {
@@ -641,9 +633,7 @@ export function createTransferProposal(params: {
   hasBankGuarantee?: boolean;
 }) {
   if (isOfflineMode()) return localEngine.localCreateTransferProposal(params);
-  return request<TransferProposal>('/transfers/proposals', { method: 'POST', body: JSON.stringify(params) }).catch(() =>
-    localEngine.localCreateTransferProposal(params)
-  );
+  return request<TransferProposal>('/transfers/proposals', { method: 'POST', body: JSON.stringify(params) }).catch(localFallback(() => localEngine.localCreateTransferProposal(params)));
 }
 
 export function acceptTransferProposal(proposalId: string) {
@@ -656,7 +646,7 @@ export function rejectTransferProposal(proposalId: string) {
 
 export function listContinentalTournaments() {
   if (isOfflineMode()) return localEngine.localListContinentalTournaments();
-  return request<any[]>('/continental-tournaments').catch(() => localEngine.localListContinentalTournaments());
+  return request<any[]>('/continental-tournaments').catch(localFallback(() => localEngine.localListContinentalTournaments()));
 }
 
 
@@ -666,35 +656,33 @@ export function withdrawTransferProposal(proposalId: string) {
 
 export function getNationalTeam(teamCode: string) {
   if (isOfflineMode()) return localEngine.localGetNationalTeam(teamCode);
-  return request<any>(`/national-teams/${teamCode}`).catch(() => localEngine.localGetNationalTeam(teamCode));
+  return request<any>(`/national-teams/${teamCode}`).catch(localFallback(() => localEngine.localGetNationalTeam(teamCode)));
 }
 
 export function saveNationalSquad(teamCode: string, playerIds: string[]) {
   if (isOfflineMode()) return localEngine.localSaveNationalSquad(teamCode, playerIds);
-  return request<void>(`/national-teams/${teamCode}/squad`, { method: 'POST', body: JSON.stringify({ playerIds }) }).catch(() => localEngine.localSaveNationalSquad(teamCode, playerIds));
+  return request<void>(`/national-teams/${teamCode}/squad`, { method: 'POST', body: JSON.stringify({ playerIds }) }).catch(localFallback(() => localEngine.localSaveNationalSquad(teamCode, playerIds)));
 }
 
 export function listNationalJobOffers() {
   if (isOfflineMode()) return localEngine.localListNationalJobOffers();
-  return request<any[]>('/national-teams/job-offers').catch(() => localEngine.localListNationalJobOffers());
+  return request<any[]>('/national-teams/job-offers').catch(localFallback(() => localEngine.localListNationalJobOffers()));
 }
 
 export function claimNationalTeamByOffer(offerId: string) {
   if (isOfflineMode()) return localEngine.localClaimNationalTeamByOffer(offerId);
-  return request<void>(`/national-teams/job-offers/${offerId}/accept`, { method: 'POST' }).catch(() => localEngine.localClaimNationalTeamByOffer(offerId));
+  return request<void>(`/national-teams/job-offers/${offerId}/accept`, { method: 'POST' }).catch(localFallback(() => localEngine.localClaimNationalTeamByOffer(offerId)));
 }
 
 export function resignNationalTeam() {
   if (isOfflineMode()) return localEngine.localResignNationalTeam();
-  return request<void>('/national-teams/resign', { method: 'POST' }).catch(() => localEngine.localResignNationalTeam());
+  return request<void>('/national-teams/resign', { method: 'POST' }).catch(localFallback(() => localEngine.localResignNationalTeam()));
 }
 
 
 export function getDeadlineDay(clubId: string) {
   if (isOfflineMode()) return Promise.resolve(localEngine.localGetDeadlineDay(clubId));
-  return request<DeadlineDayState>(`/transfers/deadline-day?clubId=${encodeURIComponent(clubId)}`).catch(() =>
-    localEngine.localGetDeadlineDay(clubId)
-  );
+  return request<DeadlineDayState>(`/transfers/deadline-day?clubId=${encodeURIComponent(clubId)}`).catch(localFallback(() => localEngine.localGetDeadlineDay(clubId)));
 }
 
 export function placeDeadlineDayBid(input: {
@@ -707,7 +695,7 @@ export function placeDeadlineDayBid(input: {
   return request<DeadlineDayState>('/transfers/deadline-day/bid', {
     method: 'POST',
     body: JSON.stringify(input),
-  }).catch(() => localEngine.localPlaceDeadlineDayBid(input));
+  }).catch(localFallback(() => localEngine.localPlaceDeadlineDayBid(input)));
 }
 
 export function advanceDeadlineDay(clubId: string) {
@@ -715,15 +703,13 @@ export function advanceDeadlineDay(clubId: string) {
   return request<DeadlineDayState>('/transfers/deadline-day/advance', {
     method: 'POST',
     body: JSON.stringify({ clubId }),
-  }).catch(() => localEngine.localAdvanceDeadlineDay(clubId));
+  }).catch(localFallback(() => localEngine.localAdvanceDeadlineDay(clubId)));
 }
 
 export function listScoutingDatabase(country?: string) {
   if (isOfflineMode()) return localEngine.localListScoutingDatabase(country);
   const query = country ? `?country=${country}` : '';
-  return request<Array<{ id: string; name: string; country: string; slug: string | null; players: Player[]; stadiumCapacity: number; titlesWon: number }>>(`/transfers/scouting${query}`).catch(() =>
-    localEngine.localListScoutingDatabase(country),
-  );
+  return request<Array<{ id: string; name: string; country: string; slug: string | null; players: Player[]; stadiumCapacity: number; titlesWon: number }>>(`/transfers/scouting${query}`).catch(localFallback(() => localEngine.localListScoutingDatabase(country),));
 }
 
 export function updatePlayerReleaseClause(clubId: string, playerId: string, newReleaseClause: number) {
@@ -731,17 +717,17 @@ export function updatePlayerReleaseClause(clubId: string, playerId: string, newR
   return request<Club>(`/clubs/${clubId}/release-clause`, {
     method: 'POST',
     body: JSON.stringify({ playerId, newReleaseClause }),
-  }).catch(() => localEngine.localUpdateReleaseClause(clubId, playerId, newReleaseClause));
+  }).catch(localFallback(() => localEngine.localUpdateReleaseClause(clubId, playerId, newReleaseClause)));
 }
 
 export function autoShieldSquadReleaseClauses(clubId: string) {
   if (isOfflineMode()) return localEngine.localAutoShieldReleaseClauses(clubId);
-  return request<Club>(`/clubs/${clubId}/auto-shield`, { method: 'POST' }).catch(() => localEngine.localAutoShieldReleaseClauses(clubId));
+  return request<Club>(`/clubs/${clubId}/auto-shield`, { method: 'POST' }).catch(localFallback(() => localEngine.localAutoShieldReleaseClauses(clubId)));
 }
 
 export function listStaffMarket(clubId: string) {
   if (isOfflineMode()) return localEngine.localListStaffMarket(clubId);
-  return request<StaffMember[]>(`/clubs/${clubId}/staff-market`).catch(() => localEngine.localListStaffMarket(clubId));
+  return request<StaffMember[]>(`/clubs/${clubId}/staff-market`).catch(localFallback(() => localEngine.localListStaffMarket(clubId)));
 }
 
 export function hireStaff(clubId: string, staff: StaffMember) {
@@ -749,7 +735,7 @@ export function hireStaff(clubId: string, staff: StaffMember) {
   return request<Club>(`/clubs/${clubId}/staff`, {
     method: 'POST',
     body: JSON.stringify(staff),
-  }).catch(() => localEngine.localHireStaff(clubId, staff.id));
+  }).catch(localFallback(() => localEngine.localHireStaff(clubId, staff.id)));
 }
 
 export type LeagueStats = {
@@ -759,24 +745,22 @@ export type LeagueStats = {
 
 export function getActiveLeague(clubId: string) {
   if (isOfflineMode()) return localEngine.getActiveLeague(clubId);
-  return request<(League & { standings: StandingRow[] }) | null>(`/leagues/active?clubId=${clubId}`).catch(() =>
-    localEngine.getActiveLeague(clubId)
-  );
+  return request<(League & { standings: StandingRow[] }) | null>(`/leagues/active?clubId=${clubId}`).catch(localFallback(() => localEngine.getActiveLeague(clubId)));
 }
 
 export function getLeagueStats(leagueId: string): Promise<LeagueStats> {
   if (isOfflineMode()) return localEngine.getLeagueStats(leagueId);
-  return request<LeagueStats>(`/leagues/${leagueId}/stats`).catch(() => localEngine.getLeagueStats(leagueId));
+  return request<LeagueStats>(`/leagues/${leagueId}/stats`).catch(localFallback(() => localEngine.getLeagueStats(leagueId)));
 }
 
 export function getWorldStats(): Promise<LeagueStats> {
   if (isOfflineMode()) return localEngine.getWorldStats();
-  return request<LeagueStats>(`/game/world-stats`).catch(() => localEngine.getWorldStats());
+  return request<LeagueStats>(`/game/world-stats`).catch(localFallback(() => localEngine.getWorldStats()));
 }
 
 export function fireStaff(clubId: string, staffId: string) {
   if (isOfflineMode()) return localEngine.localFireStaff(clubId, staffId);
-  return request<Club>(`/clubs/${clubId}/staff/${staffId}`, { method: 'DELETE' }).catch(() => localEngine.localFireStaff(clubId, staffId));
+  return request<Club>(`/clubs/${clubId}/staff/${staffId}`, { method: 'DELETE' }).catch(localFallback(() => localEngine.localFireStaff(clubId, staffId)));
 }
 
 export function updateStaffDelegationConfig(clubId: string, config: StaffDelegationConfig): Promise<Club> {
@@ -784,23 +768,19 @@ export function updateStaffDelegationConfig(clubId: string, config: StaffDelegat
   return request<Club>(`/clubs/${clubId}/staff/delegation`, {
     method: 'PUT',
     body: JSON.stringify(config),
-  }).catch(() => localEngine.localUpdateStaffDelegation(clubId, config));
+  }).catch(localFallback(() => localEngine.localUpdateStaffDelegation(clubId, config)));
 }
 
 export function getTacticalAdvice(clubId: string, opponentId?: string) {
   if (isOfflineMode()) return localEngine.localGetTacticalAdvice(clubId, opponentId);
   const query = opponentId ? `?opponentId=${opponentId}` : '';
   // Spelled out inline, this drifted from the report the server actually sends the moment the report grew.
-  return request<TacticalAssistantAdvice>(`/clubs/${clubId}/tactical-advice${query}`).catch(() =>
-    localEngine.localGetTacticalAdvice(clubId, opponentId),
-  );
+  return request<TacticalAssistantAdvice>(`/clubs/${clubId}/tactical-advice${query}`).catch(localFallback(() => localEngine.localGetTacticalAdvice(clubId, opponentId),));
 }
 
 export function getOppositionDossier(clubId: string, opponentId: string) {
   if (isOfflineMode()) return localEngine.localGetOppositionDossier(clubId, opponentId);
-  return request<OppositionDossier>(`/clubs/${clubId}/opposition-dossier?opponentId=${opponentId}`).catch(() =>
-    localEngine.localGetOppositionDossier(clubId, opponentId),
-  );
+  return request<OppositionDossier>(`/clubs/${clubId}/opposition-dossier?opponentId=${opponentId}`).catch(localFallback(() => localEngine.localGetOppositionDossier(clubId, opponentId),));
 }
 
 export function autoTrainSquad(clubId: string) {
@@ -809,7 +789,7 @@ export function autoTrainSquad(clubId: string) {
     club: Club;
     actions: { playerId: string; playerName: string; focus: string; cost: number; reason: string }[];
     message: string;
-  }>(`/clubs/${clubId}/auto-train`, { method: 'POST' }).catch(() => localEngine.localAutoTrainSquad(clubId));
+  }>(`/clubs/${clubId}/auto-train`, { method: 'POST' }).catch(localFallback(() => localEngine.localAutoTrainSquad(clubId)));
 }
 
 export function autoTrainAcademy(clubId: string) {
@@ -818,7 +798,7 @@ export function autoTrainAcademy(clubId: string) {
     club: Club;
     actions: { playerId: string; playerName: string; focus: string; cost: number; reason: string }[];
     message: string;
-  }>(`/clubs/${clubId}/auto-train-academy`, { method: 'POST' }).catch(() => localEngine.localAutoTrainAcademy(clubId));
+  }>(`/clubs/${clubId}/auto-train-academy`, { method: 'POST' }).catch(localFallback(() => localEngine.localAutoTrainAcademy(clubId)));
 }
 
 export function autoPrepareTactics(clubId: string, opponentId?: string) {
@@ -827,47 +807,37 @@ export function autoPrepareTactics(clubId: string, opponentId?: string) {
     club: Club;
     tactic: any;
     message: string;
-  }>(`/clubs/${clubId}/auto-tactics`, { method: 'POST', body: JSON.stringify({ opponentId }) }).catch(() => localEngine.localAutoPrepareTactics(clubId));
+  }>(`/clubs/${clubId}/auto-tactics`, { method: 'POST', body: JSON.stringify({ opponentId }) }).catch(localFallback(() => localEngine.localAutoPrepareTactics(clubId)));
 }
 
 export function trainPlayer(clubId: string, playerId: string, focus?: TrainingFocus | null) {
   if (isOfflineMode()) return localEngine.localTrainPlayer(clubId, playerId, focus ?? null);
-  return request<Club>(`/clubs/${clubId}/players/${playerId}/train`, { method: 'POST', body: JSON.stringify({ focus: focus ?? null }) }).catch(() =>
-    localEngine.localTrainPlayer(clubId, playerId, focus ?? null)
-  );
+  return request<Club>(`/clubs/${clubId}/players/${playerId}/train`, { method: 'POST', body: JSON.stringify({ focus: focus ?? null }) }).catch(localFallback(() => localEngine.localTrainPlayer(clubId, playerId, focus ?? null)));
 }
 
 export function setCaptain(clubId: string, playerId: string | null) {
   if (isOfflineMode()) return localEngine.localSetCaptain(clubId, playerId ?? '');
-  return request<Club>(`/clubs/${clubId}/captain`, { method: 'POST', body: JSON.stringify({ playerId }) }).catch(() =>
-    localEngine.localSetCaptain(clubId, playerId ?? '')
-  );
+  return request<Club>(`/clubs/${clubId}/captain`, { method: 'POST', body: JSON.stringify({ playerId }) }).catch(localFallback(() => localEngine.localSetCaptain(clubId, playerId ?? '')));
 }
 
 export function setTutor(clubId: string, playerId: string | null) {
   if (isOfflineMode()) return localEngine.localSetTutor(clubId, playerId ?? '');
-  return request<Club>(`/clubs/${clubId}/tutor`, { method: 'POST', body: JSON.stringify({ playerId }) }).catch(() =>
-    localEngine.localSetTutor(clubId, playerId ?? '')
-  );
+  return request<Club>(`/clubs/${clubId}/tutor`, { method: 'POST', body: JSON.stringify({ playerId }) }).catch(localFallback(() => localEngine.localSetTutor(clubId, playerId ?? '')));
 }
 
 export function setPlayerRole(clubId: string, playerId: string, role: PlayerRole, assign: boolean) {
   if (isOfflineMode()) return localEngine.localSetPlayerRole(clubId, playerId, role, assign);
-  return request<Club>(`/clubs/${clubId}/player-role`, { method: 'POST', body: JSON.stringify({ playerId, role, assign }) }).catch(() =>
-    localEngine.localSetPlayerRole(clubId, playerId, role, assign)
-  );
+  return request<Club>(`/clubs/${clubId}/player-role`, { method: 'POST', body: JSON.stringify({ playerId, role, assign }) }).catch(localFallback(() => localEngine.localSetPlayerRole(clubId, playerId, role, assign)));
 }
 
 export function setPlayerFunctions(clubId: string, playerId: string, functions: PlayerFunction[]) {
   if (isOfflineMode()) return localEngine.localSetPlayerFunctions(clubId, playerId, functions);
-  return request<Club>(`/clubs/${clubId}/players/${playerId}/functions`, { method: 'POST', body: JSON.stringify({ functions }) }).catch(() =>
-    localEngine.localSetPlayerFunctions(clubId, playerId, functions)
-  );
+  return request<Club>(`/clubs/${clubId}/players/${playerId}/functions`, { method: 'POST', body: JSON.stringify({ functions }) }).catch(localFallback(() => localEngine.localSetPlayerFunctions(clubId, playerId, functions)));
 }
 
 export function listTacticPresets(clubId: string) {
   if (isOfflineMode()) return localEngine.localListTacticPresets(clubId);
-  return request<TacticPreset[]>(`/clubs/${clubId}/tactic-presets`).catch(() => localEngine.localListTacticPresets(clubId));
+  return request<TacticPreset[]>(`/clubs/${clubId}/tactic-presets`).catch(localFallback(() => localEngine.localListTacticPresets(clubId)));
 }
 
 export function saveTacticPreset(clubId: string, name: string, tactic: Tactic) {
@@ -875,33 +845,27 @@ export function saveTacticPreset(clubId: string, name: string, tactic: Tactic) {
   return request<TacticPreset>(`/clubs/${clubId}/tactic-presets`, {
     method: 'POST',
     body: JSON.stringify({ name, tactic }),
-  }).catch(() => localEngine.localSaveTacticPreset(clubId, { name, tactic }));
+  }).catch(localFallback(() => localEngine.localSaveTacticPreset(clubId, { name, tactic })));
 }
 
 export function deleteTacticPreset(clubId: string, presetId: string) {
   if (isOfflineMode()) return localEngine.localDeleteTacticPreset(clubId, presetId);
-  return request<void>(`/clubs/${clubId}/tactic-presets/${presetId}`, { method: 'DELETE' }).catch(() =>
-    localEngine.localDeleteTacticPreset(clubId, presetId)
-  );
+  return request<void>(`/clubs/${clubId}/tactic-presets/${presetId}`, { method: 'DELETE' }).catch(localFallback(() => localEngine.localDeleteTacticPreset(clubId, presetId)));
 }
 
 export function setDefaultTacticPreset(clubId: string, presetId: string) {
   if (isOfflineMode()) return localEngine.localSetDefaultTacticPreset(clubId, presetId);
-  return request<TacticPreset>(`/clubs/${clubId}/tactic-presets/${presetId}/default`, { method: 'POST' }).catch(() =>
-    localEngine.localSetDefaultTacticPreset(clubId, presetId)
-  );
+  return request<TacticPreset>(`/clubs/${clubId}/tactic-presets/${presetId}/default`, { method: 'POST' }).catch(localFallback(() => localEngine.localSetDefaultTacticPreset(clubId, presetId)));
 }
 
 export function setRoundTactic(clubId: string, tactic: Tactic) {
   if (isOfflineMode()) return localEngine.localSetRoundTactic(clubId, tactic);
-  return request<Club>(`/clubs/${clubId}/round-tactic`, { method: 'POST', body: JSON.stringify(tactic) }).catch(() =>
-    localEngine.localSetRoundTactic(clubId, tactic)
-  );
+  return request<Club>(`/clubs/${clubId}/round-tactic`, { method: 'POST', body: JSON.stringify(tactic) }).catch(localFallback(() => localEngine.localSetRoundTactic(clubId, tactic)));
 }
 
 export function clearRoundTactic(clubId: string) {
   if (isOfflineMode()) return localEngine.localClearRoundTactic(clubId);
-  return request<Club>(`/clubs/${clubId}/round-tactic`, { method: 'DELETE' }).catch(() => localEngine.localClearRoundTactic(clubId));
+  return request<Club>(`/clubs/${clubId}/round-tactic`, { method: 'DELETE' }).catch(localFallback(() => localEngine.localClearRoundTactic(clubId)));
 }
 
 export interface GameStateView {
@@ -915,12 +879,12 @@ export interface GameStateView {
 
 export function getGameState() {
   if (isOfflineMode()) return localEngine.localGetGameState();
-  return request<GameStateView>('/game/state').catch(() => localEngine.localGetGameState());
+  return request<GameStateView>('/game/state').catch(localFallback(() => localEngine.localGetGameState()));
 }
 
 export function getDetailedGameState() {
   if (isOfflineMode()) return Promise.resolve(localEngine.loadLocalGameState());
-  return request<any>('/game/detailed-state').catch(() => localEngine.loadLocalGameState());
+  return request<any>('/game/detailed-state').catch(localFallback(() => localEngine.loadLocalGameState()));
 }
 
 
@@ -961,17 +925,20 @@ export interface MatchdayOutcome {
 
 export function getNextMatchday() {
   if (isOfflineMode()) return localEngine.localGetNextMatchday();
-  return request<ScheduledRound | null>('/game/next-matchday').catch(() => localEngine.localGetNextMatchday());
+  return request<ScheduledRound | null>('/game/next-matchday').catch(localFallback(() => localEngine.localGetNextMatchday()));
 }
 
-export function advanceMatchday() {
+export function advanceMatchday(clubId?: string) {
   if (isOfflineMode()) return localEngine.localAdvanceMatchday();
-  return request<MatchdayOutcome>('/game/advance', { method: 'POST' }).catch(() => localEngine.localAdvanceMatchday());
+  return request<MatchdayOutcome>('/game/advance', {
+    method: 'POST',
+    body: clubId ? JSON.stringify({ clubId }) : undefined,
+  }).catch(localFallback(() => localEngine.localAdvanceMatchday()));
 }
 
 export function fastAdvanceToNextMatch(clubId?: string) {
   if (isOfflineMode()) return localEngine.localFastAdvanceToNextMatch(clubId);
-  return request<import('@tactical-arena/shared').FastAdvanceResult>(`/game/fast-advance${clubId ? `?clubId=${clubId}` : ''}`, { method: 'POST' }).catch(() => localEngine.localFastAdvanceToNextMatch(clubId));
+  return request<import('@tactical-arena/shared').FastAdvanceResult>(`/game/fast-advance${clubId ? `?clubId=${clubId}` : ''}`, { method: 'POST' }).catch(localFallback(() => localEngine.localFastAdvanceToNextMatch(clubId)));
 }
 
 
@@ -979,7 +946,7 @@ export function getClubCalendar(clubId: string) {
   if (isOfflineMode()) return localEngine.localGetClubCalendar(clubId);
   return request<{ clubId: string; seasonYear: number | null; entries: CalendarEntry[] }>(
     `/game/calendar?clubId=${clubId}`,
-  ).catch(() => localEngine.localGetClubCalendar(clubId));
+  ).catch(localFallback(() => localEngine.localGetClubCalendar(clubId)));
 }
 
 
@@ -990,16 +957,12 @@ export function listLeagues(country?: string, division?: number) {
   if (country) params.set('country', country);
   if (division !== undefined) params.set('division', String(division));
   const query = params.toString();
-  return request<League[]>(`/leagues${query ? `?${query}` : ''}`).catch(() =>
-    localEngine.localListLeagues(country, division)
-  );
+  return request<League[]>(`/leagues${query ? `?${query}` : ''}`).catch(localFallback(() => localEngine.localListLeagues(country, division)));
 }
 
 export function getLeague(leagueId: string) {
   if (isOfflineMode()) return localEngine.localGetLeagueById(leagueId);
-  return request<League & { standings: StandingRow[] }>(`/leagues/${leagueId}`).catch(() =>
-    localEngine.localGetLeagueById(leagueId)
-  );
+  return request<League & { standings: StandingRow[] }>(`/leagues/${leagueId}`).catch(localFallback(() => localEngine.localGetLeagueById(leagueId)));
 }
 
 
@@ -1016,12 +979,12 @@ export function listCups(country?: string) {
   const params = new URLSearchParams();
   if (country) params.set('country', country);
   const query = params.toString();
-  return request<Cup[]>(`/cups${query ? `?${query}` : ''}`).catch(() => localEngine.localListCups(country));
+  return request<Cup[]>(`/cups${query ? `?${query}` : ''}`).catch(localFallback(() => localEngine.localListCups(country)));
 }
 
 export function getCup(cupId: string) {
   if (isOfflineMode()) return localEngine.localGetCupById(cupId);
-  return request<Cup>(`/cups/${cupId}`).catch(() => localEngine.localGetCupById(cupId));
+  return request<Cup>(`/cups/${cupId}`).catch(localFallback(() => localEngine.localGetCupById(cupId)));
 }
 
 
@@ -1039,16 +1002,12 @@ export function advanceCupRound(cupId: string) {
 
 export function promoteAcademyPlayer(clubId: string, playerId: string) {
   if (isOfflineMode()) return localEngine.localPromoteAcademyPlayer(clubId, playerId);
-  return request<Club>(`/clubs/${clubId}/academy/${playerId}/promote`, { method: 'POST' }).catch(() =>
-    localEngine.localPromoteAcademyPlayer(clubId, playerId),
-  );
+  return request<Club>(`/clubs/${clubId}/academy/${playerId}/promote`, { method: 'POST' }).catch(localFallback(() => localEngine.localPromoteAcademyPlayer(clubId, playerId),));
 }
 
 export function releaseAcademyPlayer(clubId: string, playerId: string) {
   if (isOfflineMode()) return localEngine.localReleaseAcademyPlayer(clubId, playerId);
-  return request<Club>(`/clubs/${clubId}/academy/${playerId}/release`, { method: 'POST' }).catch(() =>
-    localEngine.localReleaseAcademyPlayer(clubId, playerId),
-  );
+  return request<Club>(`/clubs/${clubId}/academy/${playerId}/release`, { method: 'POST' }).catch(localFallback(() => localEngine.localReleaseAcademyPlayer(clubId, playerId),));
 }
 
 /** `focus` is optional — omitted, the session still buys development points, just with no attribute nudge. */
@@ -1057,14 +1016,12 @@ export function trainAcademyPlayer(clubId: string, playerId: string, focus?: Tra
   return request<Club>(`/clubs/${clubId}/academy/${playerId}/train`, {
     method: 'POST',
     body: JSON.stringify({ focus: focus ?? null }),
-  }).catch(() => localEngine.localTrainAcademyPlayer(clubId, playerId, focus ?? null));
+  }).catch(localFallback(() => localEngine.localTrainAcademyPlayer(clubId, playerId, focus ?? null)));
 }
 
 export function getSponsorshipOffers(clubId: string) {
   if (isOfflineMode()) return localEngine.localSponsorshipOffers(clubId);
-  return request<Sponsorship[]>(`/clubs/${clubId}/finance/sponsorship-offers`).catch(() =>
-    localEngine.localSponsorshipOffers(clubId),
-  );
+  return request<Sponsorship[]>(`/clubs/${clubId}/finance/sponsorship-offers`).catch(localFallback(() => localEngine.localSponsorshipOffers(clubId),));
 }
 
 export function signSponsorship(clubId: string, offer: Sponsorship) {
@@ -1078,29 +1035,27 @@ export function takeLoan(clubId: string, amount: number, planKey: LoanPlanKey) {
 
 export function getStadiumPreview(clubId: string) {
   if (isOfflineMode()) return localEngine.localGetStadiumPreview(clubId);
-  return request<StadiumUpgradePreview>(`/clubs/${clubId}/stadium/preview`).catch(() => localEngine.localGetStadiumPreview(clubId));
+  return request<StadiumUpgradePreview>(`/clubs/${clubId}/stadium/preview`).catch(localFallback(() => localEngine.localGetStadiumPreview(clubId)));
 }
 
 export function upgradeStadium(clubId: string) {
   if (isOfflineMode()) return localEngine.localUpgradeStadium(clubId);
-  return request<Club>(`/clubs/${clubId}/stadium/upgrade`, { method: 'POST' }).catch(() => localEngine.localUpgradeStadium(clubId));
+  return request<Club>(`/clubs/${clubId}/stadium/upgrade`, { method: 'POST' }).catch(localFallback(() => localEngine.localUpgradeStadium(clubId)));
 }
 
 export function getHistory() {
   if (isOfflineMode()) return localEngine.localGetHistory();
-  return request<CountryHistory[]>('/history').catch(() => localEngine.localGetHistory());
+  return request<CountryHistory[]>('/history').catch(localFallback(() => localEngine.localGetHistory()));
 }
 
 export function getHallOfFame(clubId?: string) {
   if (isOfflineMode()) return localEngine.localGetHallOfFame(clubId);
-  return request<HallOfFameData>('/history/hall-of-fame').catch(() =>
-    localEngine.localGetHallOfFame(clubId),
-  );
+  return request<HallOfFameData>('/history/hall-of-fame').catch(localFallback(() => localEngine.localGetHallOfFame(clubId),));
 }
 
 export function resignClub(clubId: string) {
   if (isOfflineMode()) return localEngine.localResignClub(clubId);
-  return request<Club>(`/clubs/${clubId}/resign`, { method: 'POST' }).catch(() => localEngine.localResignClub(clubId));
+  return request<Club>(`/clubs/${clubId}/resign`, { method: 'POST' }).catch(localFallback(() => localEngine.localResignClub(clubId)));
 }
 
 export interface CareerTenure {
@@ -1127,7 +1082,7 @@ export interface Career {
 
 export function getCareer() {
   if (isOfflineMode()) return localEngine.localGetCareer();
-  return request<Career>('/career').catch(() => localEngine.localGetCareer());
+  return request<Career>('/career').catch(localFallback(() => localEngine.localGetCareer()));
 }
 
 export interface JobOffer {
@@ -1172,7 +1127,7 @@ export function declineApproach(id: string) {
 
 export function getJobOffers() {
   if (isOfflineMode()) return localEngine.localGetJobOffers();
-  return request<JobOffer[]>('/career/offers').catch(() => localEngine.localGetJobOffers());
+  return request<JobOffer[]>('/career/offers').catch(localFallback(() => localEngine.localGetJobOffers()));
 }
 
 export function acceptJobOffer(offerId: string) {
@@ -1218,7 +1173,7 @@ export function listAllClubsForEditor() {
   if (isOfflineMode()) {
     return localEngine.localListAllClubsForEditor();
   }
-  return request<Club[]>('/team-editor/clubs').catch(() => localEngine.localListAllClubsForEditor());
+  return request<Club[]>('/team-editor/clubs').catch(localFallback(() => localEngine.localListAllClubsForEditor()));
 }
 
 export function updateEditorPlayer(clubId: string, playerId: string, patch: PlayerEditPatch) {
@@ -1254,9 +1209,7 @@ export function autoGenerateEditorSquad(clubId: string) {
 
 export function uploadEditorCrest(slug: string, base64Png: string) {
   if (isOfflineMode()) return localEngine.localUploadEditorCrest(slug, base64Png);
-  return request<void>(`/team-editor/clubs/${slug}/crest`, { method: 'POST', body: JSON.stringify({ base64Png }) }).catch(() =>
-    localEngine.localUploadEditorCrest(slug, base64Png),
-  );
+  return request<void>(`/team-editor/clubs/${slug}/crest`, { method: 'POST', body: JSON.stringify({ base64Png }) }).catch(localFallback(() => localEngine.localUploadEditorCrest(slug, base64Png),));
 }
 
 export function exportModPack() {
@@ -1396,7 +1349,7 @@ export function loadSave(id: string) {
       if (res.userId) localStorage.setItem('userId', res.userId);
       return res;
     })
-    .catch(() => localEngine.localLoadSave(id) as any);
+    .catch(localFallback(() => localEngine.localLoadSave(id) as any));
 }
 
 

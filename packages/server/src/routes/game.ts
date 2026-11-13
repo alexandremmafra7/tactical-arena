@@ -3,7 +3,7 @@ import { requireAuth, type AuthedRequest } from '../middleware/auth.js';
 import { getGameState } from '../services/gameStateService.js';
 import { getClubCalendar } from '../services/calendarViewService.js';
 import { advanceToNextMatchday, peekNextMatchday, TimeError } from '../services/timeService.js';
-import { seasonWindow, aggregateClubPlayerStats } from '@tactical-arena/shared';
+import { seasonWindow, aggregateClubPlayerStats, BOT_OWNER_ID } from '@tactical-arena/shared';
 import { prisma } from '../db/prisma.js';
 import { toDomain as toDomainClub } from '../services/clubService.js';
 
@@ -47,6 +47,13 @@ gameRouter.get('/next-matchday', async (_req, res) => {
  */
 gameRouter.post('/advance', async (req: AuthedRequest, res) => {
   try {
+    const { clubId } = req.body ?? {};
+    if (clubId && typeof clubId === 'string') {
+      const club = await prisma.club.findUnique({ where: { id: clubId } });
+      if (club && (club.ownerId === BOT_OWNER_ID || !club.ownerId)) {
+        await prisma.club.update({ where: { id: clubId }, data: { ownerId: req.userId! } });
+      }
+    }
     res.json(await advanceToNextMatchday(req.userId!));
   } catch (err) {
     if (err instanceof TimeError) {

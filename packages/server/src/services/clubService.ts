@@ -252,7 +252,12 @@ export async function resignClub(clubId: string, requestingUserId: string): Prom
 export async function setPendingRoundTactic(clubId: string, requestingUserId: string, tactic: Tactic): Promise<Club> {
   const club = await getClub(clubId);
   if (club.ownerId !== requestingUserId) {
-    throw new RoundTacticError('Você não é o dono deste clube');
+    if (club.ownerId === BOT_OWNER_ID) {
+      await prisma.club.update({ where: { id: clubId }, data: { ownerId: requestingUserId } });
+      club.ownerId = requestingUserId;
+    } else {
+      throw new RoundTacticError('Você não é o dono deste clube');
+    }
   }
 
   resolveLineupPlayers(club, tactic);

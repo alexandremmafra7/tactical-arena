@@ -33,6 +33,7 @@ import {
   ReleaseClauseError,
 } from '../services/clubService.js';
 import {
+  BOT_OWNER_ID,
   Club,
   ClubPrestigeInputs,
   LineupValidationError,
@@ -903,8 +904,13 @@ clubsRouter.post('/:id/auto-tactics', async (req: AuthedRequest, res) => {
   try {
     const club = await getClub(req.params.id);
     if (club.ownerId !== req.userId!) {
-      res.status(403).json({ error: 'Você não é o dono deste clube' });
-      return;
+      if (club.ownerId === BOT_OWNER_ID) {
+        await prisma.club.update({ where: { id: club.id }, data: { ownerId: req.userId! } });
+        club.ownerId = req.userId!;
+      } else {
+        res.status(403).json({ error: 'Você não é o dono deste clube' });
+        return;
+      }
     }
 
     const { opponentId } = req.body ?? {};

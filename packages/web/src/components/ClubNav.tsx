@@ -169,7 +169,19 @@ export function ClubNav({ club, active, backTo, onClubUpdate }: ClubNavProps) {
       <nav className="club-nav desktop-nav">
         {DESKTOP_CLUB_NAV.map((tab) => (
           <Link key={tab.key} to={clubPath(club.id, tab.destination as any)} className={`club-nav-tab${tab.matches.includes(active) ? ' active' : ''}`}>
-            {tab.icon && <img src={tab.icon} alt="" className="club-nav-icon" />}
+            {tab.icon && (
+              <img
+                src={tab.icon}
+                alt=""
+                className="club-nav-icon"
+                onError={(e) => {
+                  const cardFallback = tab.icon?.replace('/icons/', '/cards/').replace('.png', '.webp');
+                  if (cardFallback && !e.currentTarget.src.includes(cardFallback)) {
+                    e.currentTarget.src = cardFallback;
+                  }
+                }}
+              />
+            )}
             {tab.label}
           </Link>
         ))}
@@ -193,7 +205,19 @@ export function ClubNav({ club, active, backTo, onClubUpdate }: ClubNavProps) {
             className={`mobile-nav-item${item.matches.includes(active) ? ' active' : ''}`}
           >
             <div className="mobile-nav-icon-wrap">
-              {item.icon && <img src={item.icon} alt="" className="mobile-nav-icon" />}
+              {item.icon && (
+                <img
+                  src={item.icon}
+                  alt=""
+                  className="mobile-nav-icon"
+                  onError={(e) => {
+                    const cardFallback = item.icon?.replace('/icons/', '/cards/').replace('.png', '.webp');
+                    if (cardFallback && !e.currentTarget.src.includes(cardFallback)) {
+                      e.currentTarget.src = cardFallback;
+                    }
+                  }}
+                />
+              )}
             </div>
             <span className="mobile-nav-label">{item.label}</span>
           </Link>

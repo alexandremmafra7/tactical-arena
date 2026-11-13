@@ -100,7 +100,7 @@ export function OnboardingWizard({ initialManagerProfile, onCompleted, onCancel,
   const [delegationPreset, setDelegationPreset] = useState<ManagerStyleQuizPreset>('brasfoot_casual');
 
   // Step 2: Game Mode & Path
-  const [gameMode, setGameMode] = useState<GameMode>(initialManagerProfile?.gameMode || 'STANDARD');
+  const [gameMode, setGameMode] = useState<GameMode>(initialManagerProfile?.gameMode || 'PREMIUM');
   const [mode, setMode] = useState<'TAKE_OVER' | 'FOUND'>('TAKE_OVER');
 
   // Step 3: Club Selection / Foundation
@@ -183,12 +183,13 @@ export function OnboardingWizard({ initialManagerProfile, onCompleted, onCancel,
 
   async function handleClaimClub(clubId: string) {
     try {
+      const effectiveMode: GameMode = (pickDivision === 1 && gameMode === 'STANDARD') ? 'PREMIUM' : gameMode;
       const saveRes = await createNewSave({
         managerFirstName: firstName.trim(),
         managerLastName: lastName.trim(),
         managerNationality: nationality,
         managerStyle: managerStyle,
-        gameMode,
+        gameMode: effectiveMode,
         clockFormat: 'HALF_45',
       });
       if (saveRes.token) localStorage.setItem('token', saveRes.token);
@@ -197,7 +198,7 @@ export function OnboardingWizard({ initialManagerProfile, onCompleted, onCancel,
         await completeCareerOnboarding({
           saveResult: saveRes,
           delegationPreset,
-          createClub: () => claimClub(clubId, gameMode),
+          createClub: () => claimClub(clubId, effectiveMode),
         }),
       );
     } catch (err) {
@@ -700,7 +701,9 @@ export function OnboardingWizard({ initialManagerProfile, onCompleted, onCancel,
                 Selecione o país e a divisão para encontrar os clubes disponíveis sem técnico.
               </p>
               {!canTakeOverDivision(gameMode, pickDivision) && (
-                <p className="contratos-alerta">{explainBlock(gameMode, 'division')}</p>
+                <p className="contratos-alerta" style={{ color: '#fbbf24', background: 'rgba(251, 191, 36, 0.1)', padding: '6px 12px', borderRadius: 6, margin: '0 0 14px' }}>
+                  ℹ️ Ao assumir um clube de 1ª Divisão, sua carreira iniciará no modo Premium (acesso liberado a todas as divisões).
+                </p>
               )}
 
               <div className="inline-form" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>

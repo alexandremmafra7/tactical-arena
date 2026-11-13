@@ -1,5 +1,5 @@
 import type { LockerRoomState, Player, TeamTalkOption, TeamTalkResult, TeamTalkContext } from '@tactical-arena/shared';
-import { computeLockerRoomHierarchy, getAvailableTeamTalks, applyTeamTalk, createRng } from '@tactical-arena/shared';
+import { computeLockerRoomHierarchy, getAvailableTeamTalks, applyTeamTalk, createRng, BOT_OWNER_ID } from '@tactical-arena/shared';
 import { prisma } from '../db/prisma.js';
 import { ClubNotFoundError } from './clubService.js';
 
@@ -63,7 +63,12 @@ export async function applyClubTeamTalk(
     throw new ClubNotFoundError(`Clube ${clubId} não encontrado`);
   }
   if (club.ownerId !== requestingUserId) {
-    throw new LockerRoomError('Você não é o dono deste clube');
+    if (club.ownerId === BOT_OWNER_ID) {
+      await prisma.club.update({ where: { id: clubId }, data: { ownerId: requestingUserId } });
+      club.ownerId = requestingUserId;
+    } else {
+      throw new LockerRoomError('Você não é o dono deste clube');
+    }
   }
 
   const players = JSON.parse(club.playersJson) as Player[];
