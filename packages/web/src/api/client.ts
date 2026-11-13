@@ -223,6 +223,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     let res = await fetch(`${base}${path}`, {
       ...options,
       headers: {
+        'Accept': 'application/json',
         'Content-Type': 'application/json',
         ...(path.startsWith('/saves') ? await localSessionHeaders(base) : {}),
         ...authHeaders(),
@@ -242,6 +243,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         res = await fetch(`${base}${path}`, {
           ...options,
           headers: {
+            'Accept': 'application/json',
             'Content-Type': 'application/json',
             ...(path.startsWith('/saves') ? await localSessionHeaders(base) : {}),
             ...authHeaders(),

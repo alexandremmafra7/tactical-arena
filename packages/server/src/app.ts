@@ -61,6 +61,24 @@ export function createApp() {
   }
   const authRateLimit = process.env.NODE_ENV === 'test' ? 10_000 : 20;
   const savesRateLimit = process.env.NODE_ENV === 'test' ? 10_000 : 60;
+
+  // Only set when this server is embedded alongside a built web app (e.g. Docker on Render or desktop package).
+  // Serves the SPA's static assets and falls back to index.html for client-side browser navigation.
+  const webDistPath = process.env['WEB_DIST_PATH'];
+  if (webDistPath) {
+    app.use(express.static(webDistPath));
+    // When a browser navigates directly to a client route that shares a path prefix with an API router
+    // (e.g. /clubs/:id, /career, /leagues/:id, /history), the browser requests Accept: text/html.
+    // Serving index.html allows React Router to load on the client instead of hitting 401 on the API.
+    app.use((req, res, next) => {
+      if (req.method === 'GET' && req.headers.accept && req.headers.accept.includes('text/html')) {
+        res.sendFile(path.join(webDistPath, 'index.html'));
+        return;
+      }
+      next();
+    });
+  }
+
   app.use('/auth', rateLimit(authRateLimit), authRouter);
   app.use('/clubs', clubsRouter);
   app.use('/matches', matchesRouter);
@@ -74,11 +92,7 @@ export function createApp() {
   app.use('/game', gameRouter);
   app.use('/press-conferences', pressConferenceRouter);
 
-  // Only set when this server is embedded alongside a built web app (e.g. the desktop package) —
-  // serves the SPA's static assets and falls back to index.html for client-side routes.
-  const webDistPath = process.env['WEB_DIST_PATH'];
   if (webDistPath) {
-    app.use(express.static(webDistPath));
     app.get('*', (_req, res) => res.sendFile(path.join(webDistPath, 'index.html')));
   }
 

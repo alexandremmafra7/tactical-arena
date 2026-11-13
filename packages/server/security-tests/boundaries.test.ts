@@ -61,4 +61,25 @@ describe('Security boundaries without real saves', () => {
     vi.stubEnv('APP_MODE', 'hosted'); vi.stubEnv('DESKTOP_MODE', 'true');
     expect(validateSecurityConfiguration).toThrow();
   });
+  it('serves SPA index.html on browser page navigation with Accept: text/html for client routes', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { createApp } = await import('../src/app.js');
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'spa-test-'));
+    fs.writeFileSync(path.join(tmpDir, 'index.html'), '<!DOCTYPE html><html><body>SPA Root</body></html>');
+    vi.stubEnv('WEB_DIST_PATH', tmpDir);
+    vi.stubEnv('JWT_SECRET', 'test-secret-that-is-at-least-32-chars-long!');
+
+    const appInstance = createApp();
+    const res = await request(appInstance)
+      .get('/clubs/7c3b29e6-ab3a-7478-932d-3ede739d9d4c')
+      .set('Accept', 'text/html,application/xhtml+xml');
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.text).toContain('SPA Root');
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 });
