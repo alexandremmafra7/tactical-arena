@@ -73,6 +73,7 @@ import { PitchField, getFormationSlots } from '../components/PitchField.js';
 import { calculateStoppageTime, formatMatchClock } from '../lib/matchClock.js';
 import { eventIcon, eventVariant } from '../lib/matchEventDisplay.js';
 import { useClubColor } from '../lib/useClubColor.js';
+import { reorderedLineup } from '../lib/redCardLineup.js';
 import { soundFx } from '../lib/soundEffects.js';
 import { PitchVisualizer } from '../components/PitchVisualizer.js';
 import { TouchlineAssistantCard, findBestSubstitute } from '../components/TouchlineAssistantCard.js';
@@ -1007,9 +1008,27 @@ export function LiveMatchPage() {
   }
 
   async function handleResolveRedCard(lineupPlayerIds: string[] | null) {
-    await submitDecision(() => resolveRedCardDecision(matchId!, lineupPlayerIds));
+    if (match?.live?.pendingDecision?.type === 'redCard') {
+      await submitDecision(() => resolveRedCardDecision(matchId!, lineupPlayerIds));
+    } else {
+      // O servidor só segura a partida quando o técnico não delegou as substituições ao auxiliar (o padrão é
+      // delegar). Sem decisão pendente lá, pedir /decision/reorganize devolve erro e a tela ficava parada para
+      // sempre. A expulsão já está valendo; aqui basta reposicionar os mesmos jogadores e seguir.
+      await submitDecision(() => reorganizeAfterRedCardWithoutHalt(lineupPlayerIds));
+    }
     setDramaticEvent(null);
     setTacticalModalOpen(false);
+  }
+
+  async function reorganizeAfterRedCardWithoutHalt(lineupPlayerIds: string[] | null): Promise<Match> {
+    if (!match?.live || !mySide) throw new Error('Partida não carregada');
+    const current = mySide === 'home' ? match.live.homeTactic : match.live.awayTactic;
+    const ordered = lineupPlayerIds ? reorderedLineup(current, lineupPlayerIds) : null;
+    if (!ordered) return match;
+    return updateLiveMatchTactic(match.id, {
+      ...current,
+      lineup: current.lineup.map((slot, i) => ({ ...slot, playerId: ordered[i] })),
+    });
   }
 
   async function submitDecision(send: () => Promise<Match>) {
@@ -1784,14 +1803,29 @@ export function LiveMatchPage() {
                 INTERVALO (2º TEMPO)
               </button>
             ) : (
-              <button
-                type="button"
-                className="broadcast-stoppage-btn"
-                onClick={() => setTacticalModalOpen(true)}
-                title="Jogo parado: Resolver decisão pendente"
-              >
-                RESOLVER DECISÃO
-              </button>
+              match?.live?.pendingDecision ? (
+                <button
+                  type="button"
+                  className="broadcast-stoppage-btn"
+                  onClick={() => openTacticalCenter(match.live?.pendingDecision?.type === 'injury' ? 'injury' : 'redCard')}
+                  title="Jogo parado: Resolver decisão pendente"
+                >
+                  RESOLVER DECISÃO
+                </button>
+              ) : (
+                // Parada só do lado da tela (o servidor não está esperando nada): nunca deixar sem saída.
+                <button
+                  type="button"
+                  className="broadcast-resume-btn"
+                  onClick={() => {
+                    setDramaticEvent(null);
+                    setPauseReason(null);
+                  }}
+                  title="Continuar simulação da partida"
+                >
+                  CONTINUAR
+                </button>
+              )
             )}
 
             <div className="cockpit-speed-group" role="group" aria-label="Velocidade da partida">
